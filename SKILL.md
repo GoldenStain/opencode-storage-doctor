@@ -38,14 +38,21 @@ Resolve script paths relative to this skill directory. Do not assume copies exis
 
    ```bash
    python3 scripts/opencode_storage.py audit --top 20 --oversized-mib 10
+   python3 scripts/opencode_storage.py audit --session ses_1d95e5a37ffe
    ```
+
+   `--session ID` accepts a full session id or any unique prefix and prints a
+   focused single-session report (metadata, message/part/event counts and bytes,
+   and its largest messages). It exits non-zero when nothing matches or the
+   prefix is ambiguous; ambiguous prefixes list the candidate sessions.
 
 2. Report these findings to the user:
 
    - Total OpenCode data size and per-entry sizes under the data directory.
    - Physical SQLite size, WAL size, freelist bytes, clearable event bytes, and the combined reclaimable percentage.
    - Largest database tables or indexes.
-   - Largest sessions ranked by message, part, event, and `session_diff` bytes.
+   - Largest sessions ranked by message, part, event, and `session_diff` bytes,
+     each cell showing the row count and its byte size.
    - Oversized individual messages, including their session IDs and titles.
    - Orphan `session_diff` files.
    - Event-log size, including events whose session no longer exists.
