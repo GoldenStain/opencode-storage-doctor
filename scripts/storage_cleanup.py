@@ -137,6 +137,7 @@ def run(
             "dry_run": True,
             "plan": plan,
             "processes": processes,
+            "backup": bool(to_backup),
             "backup_dir": str(Path(backup_dir).expanduser()),
         }
 
@@ -222,7 +223,7 @@ def run(
                 "deleted": True,
                 "count": len(orphan_paths),
                 "bytes": bytes_total,
-                "archive": str(archive) if to_backup else "None",
+                "archive": str(archive) if to_backup else None,
             }
 
     v1["diffs"] = {"count": 0, "bytes": 0, "archive": None}
@@ -248,7 +249,7 @@ def run(
         "after_bytes": after,
         "wal_bytes": wal_after,
         "reclaimed_bytes": before - after,
-        "backup_path": str(backup),
+        "backup_path": str(backup) if to_backup else None,
         "backup_bytes": backup_bytes,
         "events": events,
         "orphans": orphans,
@@ -263,6 +264,7 @@ def render_plan(
     processes: list[dict[str, str]],
     backup_dir: str,
     console: render.Console,
+    backup: bool = False,
 ) -> None:
     console.section("Preflight")
     if processes:
@@ -330,9 +332,14 @@ def render_plan(
             )
         )
     console.write("")
-    console.write(
-        console.dim("  backup would be written to ") + console.dim(str(backup_dir))
-    )
+    if backup:
+        console.write(
+            console.dim("  backup would be written to ") + console.dim(str(backup_dir))
+        )
+    else:
+        console.write(
+            "  " + console.yellow("! no backup will be written") + console.dim("  (pass --backup)")
+        )
     console.section("Dry run")
     console.write("  " + console.yellow("nothing was modified"))
 
@@ -342,13 +349,18 @@ def render_result(result: dict, console: render.Console) -> None:
     console.write("  " + console.green("✓") + " no OpenCode processes running")
 
     console.section("Backup")
-    console.write(
-        "  "
-        + console.green("✓")
-        + f" {render.human_bytes(result['backup_bytes'])} written"
-        + console.dim(f"  {result['backup_path']}")
-    )
-    console.write("  " + console.green("✓") + " backup integrity_check ok")
+    if result["backup_path"]:
+        console.write(
+            "  "
+            + console.green("✓")
+            + f" {render.human_bytes(result['backup_bytes'])} written"
+            + console.dim(f"  {result['backup_path']}")
+        )
+        console.write("  " + console.green("✓") + " backup integrity_check ok")
+    else:
+        console.write(
+            "  " + console.yellow("! no backup written") + console.dim("  (pass --backup to keep one)")
+        )
 
     console.section("Cleanup")
     events = result["events"]
@@ -385,8 +397,8 @@ def render_result(result: dict, console: render.Console) -> None:
         console.write(
             "  "
             + console.green("✓")
-            + f" {orphans['count']} orphan diffs archived"
-            + console.dim(f"  {orphans['archive']}")
+            + f" {orphans['count']} orphan diffs removed"
+            + console.dim(f"  {orphans['archive'] or 'no archive'}")
         )
     else:
         console.write("  " + console.dim("· orphan diffs left untouched"))
@@ -408,8 +420,9 @@ def render_result(result: dict, console: render.Console) -> None:
         + console.green(render.bar(fraction))
     )
     console.write("")
-    console.write(
-        console.dim(
-            "  delete the backup only after OpenCode starts and retained sessions open"
+    if result["backup_path"]:
+        console.write(
+            console.dim(
+                "  delete the backup only after OpenCode starts and retained sessions open"
+            )
         )
-    )

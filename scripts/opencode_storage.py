@@ -96,7 +96,7 @@ def build_parser() -> argparse.ArgumentParser:
     cleanup.add_argument(
         "--backup",
         action="store_true",
-        help="decide whether to backup database and orphan-diffs",
+        help="write a verified database backup and zip removed diff files (default: no backup)",
     )
     return parser
 
@@ -149,7 +149,11 @@ def main(argv=None) -> int:
             print(json.dumps(result, indent=2, ensure_ascii=False))
         elif result["dry_run"]:
             storage_cleanup.render_plan(
-                result["plan"], result["processes"], result["backup_dir"], console
+                result["plan"],
+                result["processes"],
+                result["backup_dir"],
+                console,
+                backup=result["backup"],
             )
         else:
             storage_cleanup.render_result(result, console)

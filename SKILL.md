@@ -114,7 +114,7 @@ Any direct SQL modification to messages, sessions, parts, or event data is destr
 
    Omit flags that were not explicitly approved.
 
-4. The script must refuse to run while OpenCode is active. It creates and verifies a timestamped SQLite backup before modifying the database, checkpoints WAL, performs `VACUUM`, and runs `integrity_check` afterward. Each step prints as a `✓` line with the before/after sizes and reclaimed percentage.
+4. The script must refuse to run while OpenCode is active. With `--backup`, it first creates and verifies a timestamped SQLite backup and zips any diff files it removes; without `--backup` it writes no backup and says so. It then checkpoints WAL, performs `VACUUM`, and runs `integrity_check` afterward. Each step prints as a `✓` line with the before/after sizes and reclaimed percentage. Recommend `--backup` unless the user already holds a recent backup.
 
 5. After OpenCode restarts, run the audit again and ask the user to open several retained sessions.
 

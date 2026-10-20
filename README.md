@@ -8,7 +8,7 @@
 
 A self-contained [OpenCode](https://opencode.ai) skill that audits and safely cleans OpenCode's local storage: the SQLite database, its WAL, the persistent event log, `session_diff` files, and oversized `tool-output`.
 
-The audit is **read-only** and never prints conversation content. Cleanup is destructive by design, requires explicit flags, takes a verified backup first, and refuses to run while OpenCode is alive.
+The audit is **read-only** and never prints conversation content. Cleanup is destructive by design, requires explicit flags, takes a verified backup when asked to (`--backup`), and refuses to run while OpenCode is alive.
 
 ### Requirements
 
@@ -60,7 +60,7 @@ On V2 databases, sessions and messages come from `session_v2` and `session_messa
 #### cleanup (destructive)
 
 - Refuses to run while any `opencode` process is alive (VACUUM requires exclusive database access) and names the offending PIDs.
-- Creates and integrity-checks a timestamped backup (`opencode.db.pre-cleanup-<timestamp>.bak`) before touching anything.
+- With `--backup`: creates and integrity-checks a timestamped backup (`opencode.db.pre-cleanup-<timestamp>.bak`) before touching anything, and zips removed diff files. Without it, no backup is written.
 - `--clear-events`: delete `event` rows, plus `event_sequence` on V1 databases only (V2 numbers new session messages from `event_sequence`, so it is kept there).
 - `--delete-orphan-diffs`: archive, then remove `session_diff` files with no corresponding live session.
 - `--purge-v1` (V2 databases only): delete the V1 `session`, `message`, `part`, `todo`, and `session_share` rows, and the `session_diff` files, of sessions that V2 has already migrated. The tables are kept empty. V1 sessions missing from V2 are kept. Refuses when V2's V1->V2 migration is not completed. This removes the only lossless copy of V1 history; pass `--backup` if you may need it again.
@@ -95,7 +95,7 @@ MIT — see [LICENSE](LICENSE).
 
 一个自包含的 [OpenCode](https://opencode.ai) skill：审计并安全清理 OpenCode 的本地存储——SQLite 数据库、WAL、持久化事件日志、`session_diff` 文件，以及体积异常的 `tool-output`。
 
-审计**只读**，且绝不打印对话内容。清理按设计是破坏性操作：必须显式指定参数、先做带校验的备份、并在 OpenCode 进程存活时拒绝运行。
+审计**只读**，且绝不打印对话内容。清理按设计是破坏性操作：必须显式指定参数、按需（`--backup`）做带校验的备份、并在 OpenCode 进程存活时拒绝运行。
 
 ### 环境要求
 
@@ -147,7 +147,7 @@ python3 scripts/opencode_storage.py cleanup [--clear-events] [--delete-orphan-di
 #### cleanup（破坏性）
 
 - OpenCode 进程存活时**拒绝运行**（VACUUM 需要独占数据库访问），并列出占用进程的 PID。
-- 改动前先创建带时间戳的备份（`opencode.db.pre-cleanup-<时间戳>.bak`）并做完整性校验。
+- 加 `--backup` 时：改动前先创建带时间戳的备份（`opencode.db.pre-cleanup-<时间戳>.bak`）并做完整性校验，被删的 diff 文件打包成 zip。不加则不写任何备份。
 - `--clear-events`：删除 `event` 行；仅在 V1 数据库上同时删除 `event_sequence`（V2 用 `event_sequence` 给新消息编号，所以保留）。
 - `--delete-orphan-diffs`：先归档，再删除没有对应存活会话的 `session_diff` 文件。
 - `--purge-v1`（仅限 V2 数据库）：删除 V2 已迁移会话在 V1 `session`、`message`、`part`、`todo`、`session_share` 表中的行，以及它们的 `session_diff` 文件。表本身保留为空表。V2 中没有的 V1 会话会保留。V2 的 V1→V2 迁移未完成时拒绝执行。这会删掉 V1 历史唯一的无损副本；如果以后可能还需要，请加 `--backup`。
