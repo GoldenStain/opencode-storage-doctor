@@ -4,6 +4,9 @@ An OpenCode skill that audits OpenCode's local storage and cleans or repairs it.
 `SKILL.md` is the agent-facing contract; `README.md` is the human-facing one.
 Keep both in step with the CLI. The `description` in `SKILL.md`'s frontmatter
 decides when agents load the skill: name every symptom a subcommand fixes there.
+OpenCode takes the skill id from the install directory name and the display name
+from `SKILL.md`'s `name`. Keep both equal to the repository name,
+`opencode-storage-doctor` (formerly `opencode-storage-audit`).
 
 ## Rules
 

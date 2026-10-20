@@ -1,9 +1,9 @@
 ---
-name: opencode-storage-audit
+name: opencode-storage-doctor
 description: Use when OpenCode storage, opencode.db, tool-output, session_diff, or old sessions consume excessive disk space, or when sessions from non-git directories are missing from `opencode session list` after upgrading OpenCode from V1 to V2; audits usage, identifies the largest sessions, safely prepares cleanup plus offline VACUUM, and moves V1 "global" sessions back into the projects V2 lists them under.
 ---
 
-# OpenCode Storage Audit
+# OpenCode Storage Doctor
 
 Diagnose OpenCode's local storage without reading conversation content, then clean or repair it only with explicit user approval.
 

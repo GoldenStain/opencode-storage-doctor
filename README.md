@@ -1,6 +1,8 @@
-# OpenCode Storage Audit
+# OpenCode Storage Doctor
 
 [English](#english) | [中文](#中文)
+
+> Formerly `opencode-storage-audit`. Old GitHub links redirect here.
 
 ---
 
@@ -20,14 +22,14 @@ The audit is **read-only** and never prints conversation content. Cleanup is des
 Copy the directory into your OpenCode skills folder:
 
 ```bash
-git clone https://github.com/GoldenStain/opencode-storage-audit.git
-cp -r opencode-storage-audit ~/.config/opencode/skills/
+git clone https://github.com/GoldenStain/opencode-storage-doctor.git
+cp -r opencode-storage-doctor ~/.config/opencode/skills/
 ```
 
 Or symlink it:
 
 ```bash
-ln -s "$PWD/opencode-storage-audit" ~/.config/opencode/skills/opencode-storage-audit
+ln -s "$PWD/opencode-storage-doctor" ~/.config/opencode/skills/opencode-storage-doctor
 ```
 
 ### Usage
@@ -138,14 +140,14 @@ MIT — see [LICENSE](LICENSE).
 把目录复制进 OpenCode 的 skill 目录：
 
 ```bash
-git clone https://github.com/GoldenStain/opencode-storage-audit.git
-cp -r opencode-storage-audit ~/.config/opencode/skills/
+git clone https://github.com/GoldenStain/opencode-storage-doctor.git
+cp -r opencode-storage-doctor ~/.config/opencode/skills/
 ```
 
 或建立软链接：
 
 ```bash
-ln -s "$PWD/opencode-storage-audit" ~/.config/opencode/skills/opencode-storage-audit
+ln -s "$PWD/opencode-storage-doctor" ~/.config/opencode/skills/opencode-storage-doctor
 ```
 
 ### 用法
