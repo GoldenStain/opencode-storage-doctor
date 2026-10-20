@@ -74,6 +74,56 @@ def _session_filter(table: str, source: str) -> str:
     return f"{KEY_COLUMN.get(table, 'session_id')} IN ({source})"
 
 
+def _page_bytes(connection: sqlite3.Connection, table: str) -> int | None:
+    """Return on-disk bytes of a table plus its indexes, or None without dbstat."""
+    names = [
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE tbl_name=? AND type IN ('table','index')",
+            (table,),
+        )
+    ]
+    try:
+        return sum(
+            storage_db.scalar(connection, "SELECT SUM(pgsize) FROM dbstat WHERE name=?", (name,))
+            for name in names
+        )
+    except sqlite3.OperationalError:
+        return None
+
+
+def _measure(connection: sqlite3.Connection, source: str, parameters=()) -> dict:
+    """Estimate rows and on-disk bytes that deleting the sessions in source would free.
+
+    Each table's pages (with indexes) are scaled by the removed share of its byte
+    length, or of its row count when it has no large column. Without dbstat the
+    estimate falls back to the removed byte length.
+    """
+    result = {"tables": {}, "rows": 0, "bytes": 0}
+    for table in TABLES:
+        if not storage_db.table_exists(connection, table):
+            continue
+        column = BYTES_COLUMN.get(table)
+        length = f"LENGTH(CAST({column} AS BLOB))" if column else "1"
+        selected = _session_filter(table, source)
+        total_rows, rows, total_length, removed_length = connection.execute(
+            f"SELECT COUNT(*), COALESCE(SUM({selected}), 0), COALESCE(SUM({length}), 0), "
+            f"COALESCE(SUM(CASE WHEN {selected} THEN {length} END), 0) FROM {table}",
+            tuple(parameters) * 2,
+        ).fetchone()
+        pages = _page_bytes(connection, table) if rows else 0
+        if pages is None:
+            size = removed_length if column else 0
+        elif rows == total_rows:
+            size = pages
+        else:
+            size = int(pages * removed_length / total_length) if total_length else 0
+        result["tables"][table] = {"rows": rows, "bytes": size}
+        result["rows"] += rows
+        result["bytes"] += size
+    return result
+
+
 def residue(connection: sqlite3.Connection, artifacts: storage_env.Artifacts) -> dict:
     """Count V1 rows and session_diff files that a purge would remove."""
     result = {
@@ -95,17 +145,7 @@ def residue(connection: sqlite3.Connection, artifacts: storage_env.Artifacts) ->
     result["unmigrated_sessions"] = (
         storage_db.scalar(connection, "SELECT COUNT(*) FROM session") - len(migrated)
     )
-    for table in TABLES:
-        if not storage_db.table_exists(connection, table):
-            continue
-        column = BYTES_COLUMN.get(table)
-        size = f"COALESCE(SUM(LENGTH({column})), 0)" if column else "0"
-        rows, size_bytes = connection.execute(
-            f"SELECT COUNT(*), {size} FROM {table} WHERE {_session_filter(table, MIGRATED_SQL)}"
-        ).fetchone()
-        result["tables"][table] = {"rows": rows, "bytes": size_bytes}
-        result["rows"] += rows
-        result["bytes"] += size_bytes
+    result.update(_measure(connection, MIGRATED_SQL))
 
     paths = diff_paths(artifacts, migrated)
     result["diffs"] = {"count": len(paths), "bytes": sum(path.stat().st_size for path in paths)}
