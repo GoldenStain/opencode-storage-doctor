@@ -31,6 +31,18 @@ def is_v2_layout(connection: sqlite3.Connection) -> bool:
     )
 
 
+def session_tables(connection: sqlite3.Connection) -> tuple[str, str, str | None]:
+    """Return the (session, message, part) tables holding live conversations; V2 has no part table."""
+    if is_v2_layout(connection):
+        return "session_v2", "session_message", None
+    return "session", "message", "part"
+
+
+def live_session_ids(connection: sqlite3.Connection) -> set[str]:
+    session_table = session_tables(connection)[0]
+    return {row[0] for row in connection.execute(f"SELECT id FROM {session_table}")}
+
+
 def page_metrics(connection: sqlite3.Connection) -> dict:
     """Return SQLite page geometry and freelist bytes for the database."""
     page_size = scalar(connection, "PRAGMA page_size")

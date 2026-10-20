@@ -80,9 +80,7 @@ def build_plan(
             plan["freelist_bytes"] = storage_db.page_metrics(connection)[
                 "freelist_bytes"
             ]
-            live_sessions = {
-                row[0] for row in connection.execute("SELECT id FROM session")
-            }
+            live_sessions = storage_db.live_session_ids(connection)
             if clear_events and storage_db.table_exists(connection, "event"):
                 plan["clear_events"]["rows"] = storage_db.scalar(
                     connection, "SELECT COUNT(*) FROM event"
@@ -183,7 +181,7 @@ def run(
         integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
         if integrity != "ok":
             raise CleanupError(f"post-VACUUM integrity_check failed: {integrity}")
-        live_sessions = {row[0] for row in connection.execute("SELECT id FROM session")}
+        live_sessions = storage_db.live_session_ids(connection)
     finally:
         connection.close()
 

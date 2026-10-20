@@ -39,9 +39,10 @@ def _resolve_session(sessions: list[dict], query: str) -> tuple[dict | None, lis
 def _session_detail(connection: sqlite3.Connection, session: dict) -> dict:
     """Collect metadata and the largest messages for one session."""
     session_id = session["id"]
+    session_table, message_table, part_table = storage_db.session_tables(connection)
     row = connection.execute(
         "SELECT id, title, directory, project_id, parent_id, time_created, "
-        "time_updated, time_archived FROM session WHERE id=?",
+        f"time_updated, time_archived FROM {session_table} WHERE id=?",
         (session_id,),
     ).fetchone()
     (
@@ -55,6 +56,11 @@ def _session_detail(connection: sqlite3.Connection, session: dict) -> dict:
         archived,
     ) = row
 
+    part_count = (
+        f"(SELECT COUNT(*) FROM {part_table} p WHERE p.message_id=m.id)"
+        if part_table
+        else "0"
+    )
     messages = [
         {
             "id": message_id,
@@ -63,9 +69,8 @@ def _session_detail(connection: sqlite3.Connection, session: dict) -> dict:
             "created": _format_date(message_created),
         }
         for message_id, size, message_created, parts in connection.execute(
-            "SELECT m.id, LENGTH(m.data), m.time_created, "
-            "(SELECT COUNT(*) FROM part p WHERE p.message_id=m.id) "
-            "FROM message m WHERE m.session_id=? ORDER BY LENGTH(m.data) DESC",
+            f"SELECT m.id, LENGTH(m.data), m.time_created, {part_count} "
+            f"FROM {message_table} m WHERE m.session_id=? ORDER BY LENGTH(m.data) DESC",
             (session_id,),
         )
     ]
@@ -110,8 +115,8 @@ def _database_report(connection: sqlite3.Connection) -> dict:
         objects = []
 
     rows = {}
-    for table in ("session", "message", "part", "event"):
-        if storage_db.table_exists(connection, table):
+    for table in (*storage_db.session_tables(connection), "event"):
+        if table and storage_db.table_exists(connection, table):
             rows[table] = storage_db.scalar(connection, f'SELECT COUNT(*) FROM "{table}"')
 
     clearable_event_bytes = 0
@@ -137,20 +142,23 @@ def _database_report(connection: sqlite3.Connection) -> dict:
 
 
 def _session_report(connection: sqlite3.Connection, artifacts: storage_env.Artifacts) -> tuple[list[dict], set[str]]:
+    session_table, message_table, part_table = storage_db.session_tables(connection)
     message_stats = {
         session_id: (count, size)
         for session_id, count, size in connection.execute(
             "SELECT session_id, COUNT(*), COALESCE(SUM(LENGTH(data)), 0) "
-            "FROM message GROUP BY session_id"
+            f"FROM {message_table} GROUP BY session_id"
         )
     }
-    part_stats = {
-        session_id: (count, size)
-        for session_id, count, size in connection.execute(
-            "SELECT session_id, COUNT(*), COALESCE(SUM(LENGTH(data)), 0) "
-            "FROM part GROUP BY session_id"
-        )
-    }
+    part_stats = {}
+    if part_table:
+        part_stats = {
+            session_id: (count, size)
+            for session_id, count, size in connection.execute(
+                "SELECT session_id, COUNT(*), COALESCE(SUM(LENGTH(data)), 0) "
+                f"FROM {part_table} GROUP BY session_id"
+            )
+        }
     event_stats = {}
     if storage_db.table_exists(connection, "event"):
         event_stats = {
@@ -170,7 +178,7 @@ def _session_report(connection: sqlite3.Connection, artifacts: storage_env.Artif
     sessions = []
     live_sessions: set[str] = set()
     for session_id, title, directory, updated in connection.execute(
-        "SELECT id, title, directory, time_updated FROM session"
+        f"SELECT id, title, directory, time_updated FROM {session_table}"
     ):
         live_sessions.add(session_id)
         message_count, message_bytes = message_stats.get(session_id, (0, 0))
@@ -251,6 +259,7 @@ def build_report(
                 }
 
         threshold = int(oversized_mib * 1024 * 1024)
+        session_table, message_table, _part_table = storage_db.session_tables(connection)
         report["oversized_messages"] = [
             {
                 "id": message_id,
@@ -260,7 +269,7 @@ def build_report(
             }
             for message_id, session_id, size, title in connection.execute(
                 "SELECT m.id, m.session_id, LENGTH(m.data), COALESCE(s.title, '') "
-                "FROM message m LEFT JOIN session s ON s.id=m.session_id "
+                f"FROM {message_table} m LEFT JOIN {session_table} s ON s.id=m.session_id "
                 "WHERE LENGTH(m.data) >= ? ORDER BY LENGTH(m.data) DESC",
                 (threshold,),
             )
@@ -282,7 +291,7 @@ def build_report(
             orphan_count, orphan_bytes = connection.execute(
                 "SELECT COUNT(*), COALESCE(SUM(LENGTH(e.data)), 0) FROM event e "
                 "WHERE e.aggregate_id LIKE 'ses_%' "
-                "AND NOT EXISTS (SELECT 1 FROM session s WHERE s.id=e.aggregate_id)"
+                f"AND NOT EXISTS (SELECT 1 FROM {session_table} s WHERE s.id=e.aggregate_id)"
             ).fetchone()
             report["events"] = {
                 "present": True,
