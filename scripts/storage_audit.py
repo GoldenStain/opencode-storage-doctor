@@ -6,6 +6,7 @@ import datetime
 import sqlite3
 from pathlib import Path
 
+import storage_adopt
 import storage_db
 import storage_env
 import storage_render as render
@@ -221,6 +222,7 @@ def build_report(
         "events": {"present": False, "count": 0, "bytes": 0, "orphan_count": 0, "orphan_bytes": 0},
         "tool_output": {"count": 0, "bytes": 0, "files": []},
         "v1_residue": None,
+        "global_sessions": None,
     }
 
     if not artifacts.db_path.is_file():
@@ -240,6 +242,7 @@ def build_report(
                 database["reclaimable_ratio"] = min(
                     1.0, database["reclaimable_bytes"] / database["physical_bytes"]
                 )
+            report["global_sessions"] = storage_adopt.summary(storage_adopt.build_plan(connection))
         sessions, live_sessions = _session_report(connection, artifacts)
         report["session_count"] = len(sessions)
         report["sessions"] = sessions[:top]
@@ -571,6 +574,25 @@ def render_report(report: dict, console: render.Console) -> None:
                 console.warning(
                     f"  {residue['unmigrated_sessions']} V1 sessions are not in V2 and are kept"
                 )
+
+    hidden = report.get("global_sessions")
+    if hidden is not None and (hidden["movable_sessions"] or hidden["skipped_sessions"]):
+        console.section("Global sessions")
+        line = (
+            f"  {render.human_count(hidden['movable_sessions'])} sessions in "
+            f"{hidden['movable_dirs']} non-git directories are missing from `opencode session list`"
+        )
+        if hidden["movable_sessions"]:
+            console.write(console.yellow(line) + console.dim("  fix with session adopt-global"))
+        if hidden["reason"] and hidden["movable_sessions"]:
+            console.warning(f"  adopt-global would refuse: {hidden['reason']}")
+        if hidden["skipped_sessions"]:
+            console.write(
+                console.dim(
+                    f"  {render.human_count(hidden['skipped_sessions'])} sessions in "
+                    f"{hidden['skipped_dirs']} directories cannot move (see session adopt-global --dry-run)"
+                )
+            )
 
     tool = report["tool_output"]
     console.section("Tool output")

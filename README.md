@@ -6,7 +6,7 @@
 
 ## English
 
-A self-contained [OpenCode](https://opencode.ai) skill that audits and safely cleans OpenCode's local storage: the SQLite database, its WAL, the persistent event log, `session_diff` files, and oversized `tool-output`.
+A self-contained [OpenCode](https://opencode.ai) skill that audits and safely cleans OpenCode's local storage: the SQLite database, its WAL, the persistent event log, `session_diff` files, and oversized `tool-output`. It also repairs a common V1 to V2 upgrade problem: sessions from non-git directories that `opencode session list` no longer shows.
 
 The audit is **read-only** and never prints conversation content. Cleanup is destructive by design, requires explicit flags, takes a verified backup when asked to (`--backup`), and refuses to run while OpenCode is alive.
 
@@ -36,6 +36,7 @@ ln -s "$PWD/opencode-storage-audit" ~/.config/opencode/skills/opencode-storage-a
 python3 scripts/opencode_storage.py audit   [--top N] [--oversized-mib N]
 python3 scripts/opencode_storage.py cleanup [--clear-events] [--delete-orphan-diffs] [--purge-v1] [--dry-run]
 python3 scripts/opencode_storage.py session delete ID [--format auto|v1|v2] [--dry-run] [--backup] [--yes]
+python3 scripts/opencode_storage.py session adopt-global [--dir DIR]... [--dry-run] [--backup] [--yes]
 ```
 
 Shared options: `--data-dir PATH`, `--json`, `--no-color`.
@@ -87,6 +88,25 @@ Deletes one session and its child sessions, chosen by full id or unique prefix. 
 - `--backup`: write a verified database backup and zip the removed diff file first.
 - Refuses to delete the session that runs it, and warns when a session exists only as V1 data.
 
+#### session adopt-global (repair)
+
+After upgrading from V1, sessions you started outside a git repository vanish from `opencode session list`. V1 stored them all in one project named `global`; V2 gives each directory its own project but leaves the old sessions in `global`. They are still in the database.
+
+This command moves them, one directory at a time, into the project V2 uses for that directory, the same way V2 already handles git repositories. Session order and contents do not change.
+
+```bash
+# 1. see which directories and sessions would move (works while OpenCode runs)
+python3 scripts/opencode_storage.py session adopt-global --dry-run
+
+# 2. stop OpenCode (`opencode service stop`, and any app running `opencode serve`), then
+python3 scripts/opencode_storage.py session adopt-global --backup
+```
+
+- Skips directories that no longer exist, symlinked paths, and directories inside a git or hg tree (OpenCode adopts those itself).
+- `--dir DIR` (repeatable) limits the move to some directories.
+- Refuses while OpenCode runs, on non-V2 databases, and when the database's own directory projects do not match the known id rule (an unsupported OpenCode version). If no directory project exists yet, open OpenCode once in any non-git directory and retry.
+- The audit reports how many sessions are affected.
+
 ### Privacy
 
 The audit never reads or prints message, part, event, diff, or tool-output contents — only metadata and byte lengths.
@@ -104,7 +124,7 @@ MIT — see [LICENSE](LICENSE).
 
 ## 中文
 
-一个自包含的 [OpenCode](https://opencode.ai) skill：审计并安全清理 OpenCode 的本地存储——SQLite 数据库、WAL、持久化事件日志、`session_diff` 文件，以及体积异常的 `tool-output`。
+一个自包含的 [OpenCode](https://opencode.ai) skill：审计并安全清理 OpenCode 的本地存储——SQLite 数据库、WAL、持久化事件日志、`session_diff` 文件，以及体积异常的 `tool-output`。它还能修复 V1 升级到 V2 后的一个常见问题：在非 git 目录中创建的会话，在 `opencode session list` 中不再显示。
 
 审计**只读**，且绝不打印对话内容。清理按设计是破坏性操作：必须显式指定参数、按需（`--backup`）做带校验的备份、并在 OpenCode 进程存活时拒绝运行。
 
@@ -134,6 +154,7 @@ ln -s "$PWD/opencode-storage-audit" ~/.config/opencode/skills/opencode-storage-a
 python3 scripts/opencode_storage.py audit   [--top N] [--oversized-mib N]
 python3 scripts/opencode_storage.py cleanup [--clear-events] [--delete-orphan-diffs] [--purge-v1] [--dry-run]
 python3 scripts/opencode_storage.py session delete ID [--format auto|v1|v2] [--dry-run] [--backup] [--yes]
+python3 scripts/opencode_storage.py session adopt-global [--dir DIR]... [--dry-run] [--backup] [--yes]
 ```
 
 通用选项：`--data-dir PATH`、`--json`、`--no-color`。
@@ -184,6 +205,25 @@ python3 scripts/opencode_storage.py cleanup --clear-events --delete-orphan-diffs
 - `--format auto`（默认）：执行所有适用的步骤，先 V2 后 V1。
 - `--backup`：先写一份带校验的数据库备份，并把被删的 diff 文件打包成 zip。
 - 拒绝删除正在运行本命令的会话；会话只存在于 V1 数据中时会给出警告。
+
+#### session adopt-global（修复）
+
+从 V1 升级后，在 git 仓库之外创建的会话会从 `opencode session list` 中消失。原因是 V1 把这些会话都放在一个名为 `global` 的项目里；V2 给每个目录单独建项目，但旧会话仍留在 `global` 中。数据本身仍在数据库里。
+
+这个命令按目录把它们移到 V2 为该目录使用的项目中，做法与 V2 处理 git 仓库时相同。会话的顺序和内容都不变。
+
+```bash
+# 1. 查看哪些目录和会话会被移动（OpenCode 运行时也可执行）
+python3 scripts/opencode_storage.py session adopt-global --dry-run
+
+# 2. 停止 OpenCode（`opencode service stop`，以及所有自己运行 `opencode serve` 的应用），然后执行
+python3 scripts/opencode_storage.py session adopt-global --backup
+```
+
+- 跳过已不存在的目录、带符号链接的路径，以及位于 git 或 hg 仓库内的目录（OpenCode 会自行处理这些）。
+- `--dir DIR`（可重复）只移动指定目录。
+- 以下情况拒绝执行：OpenCode 正在运行；不是 V2 数据库；数据库中已有的目录项目不符合已知的 id 规则（说明 OpenCode 版本不受支持）。如果还没有任何目录项目，请先在任意非 git 目录中打开一次 OpenCode，再重试。
+- audit 报告会显示受影响的会话数量。
 
 ### 隐私
 

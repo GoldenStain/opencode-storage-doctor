@@ -1,11 +1,11 @@
 ---
 name: opencode-storage-audit
-description: Use when OpenCode storage, opencode.db, tool-output, session_diff, or old sessions consume excessive disk space; audits usage, identifies the largest sessions, and safely prepares cleanup plus offline VACUUM.
+description: Use when OpenCode storage, opencode.db, tool-output, session_diff, or old sessions consume excessive disk space, or when sessions from non-git directories are missing from `opencode session list` after upgrading OpenCode from V1 to V2; audits usage, identifies the largest sessions, safely prepares cleanup plus offline VACUUM, and moves V1 "global" sessions back into the projects V2 lists them under.
 ---
 
 # OpenCode Storage Audit
 
-Diagnose OpenCode's local storage without reading conversation content, then clean it only with explicit user approval.
+Diagnose OpenCode's local storage without reading conversation content, then clean or repair it only with explicit user approval.
 
 ## Scripts
 
@@ -15,6 +15,7 @@ One entry point, standard-library Python only:
 python3 scripts/opencode_storage.py audit   [--top N] [--oversized-mib N]
 python3 scripts/opencode_storage.py cleanup [--clear-events] [--delete-orphan-diffs] [--purge-v1] [--dry-run]
 python3 scripts/opencode_storage.py session delete ID [--format auto|v1|v2] [--dry-run] [--backup] [--yes]
+python3 scripts/opencode_storage.py session adopt-global [--dir DIR]... [--dry-run] [--backup] [--yes]
 ```
 
 Shared options on every subcommand:
@@ -23,7 +24,7 @@ Shared options on every subcommand:
 - `--no-color`: disable ANSI color; `NO_COLOR` is honored automatically and color is off when output is not a TTY.
 - `--json`: emit machine-readable JSON instead of the rendered report.
 
-`audit` is read-only. `cleanup` is destructive and refuses to run while OpenCode is active. `session delete` is destructive and asks for confirmation unless `--yes` is given.
+`audit` is read-only. `cleanup` and `session adopt-global` change the database and refuse to run while OpenCode is active. `session delete` is destructive. Both `session` commands ask for confirmation unless `--yes` is given.
 
 Resolve script paths relative to this skill directory. Do not assume copies exist in the user's home directory.
 
@@ -61,6 +62,8 @@ Resolve script paths relative to this skill directory. Do not assume copies exis
    - Event-log size, including events whose session no longer exists.
    - V2 databases only: V1 residue, meaning V1 rows and `session_diff` files of
      sessions that V2 has already migrated, and any V1 sessions that V2 lacks.
+   - V2 databases only: global sessions that `opencode session list` does not
+     show, and how many of them `session adopt-global` can move.
    - Largest `tool-output` files.
 
 3. Explain the difference between logical deletion and physical shrinkage. SQLite `DELETE` adds pages to the freelist; only `VACUUM` returns that space to the filesystem. Reclaimable space is `freelist + event rows + V1 residue rows`. On a database upgraded from V1, `--purge-v1` is usually the largest single win.
@@ -90,6 +93,32 @@ Resolve script paths relative to this skill directory. Do not assume copies exis
 - Re-run the audit after session deletion. Confirm that no orphan message or part rows remain.
 
 Any direct SQL modification to messages, sessions, parts, or event data is destructive. State the exact rows and estimated bytes, then obtain explicit approval before changing them.
+
+## Global Sessions After the V1 to V2 Upgrade
+
+V1 put every session outside a git repository into one project, `global`. V2 gives each such directory its own project (id = sha1 of `directory:<path>`), but its migration leaves the old sessions in `global`. `opencode session list` lists only the current project, so those sessions seem lost. They are still in the database, and OpenChamber, which lists by directory, still shows them.
+
+`session adopt-global` moves them, directory by directory, into the project V2 uses for that directory. It does what V2 already does for git repositories: it sets `project_id` and an empty `path`, and keeps `time_updated`, so the session order stays the same. It creates the directory project row when it is missing.
+
+1. Show the plan. It is read-only and works while OpenCode runs:
+
+   ```bash
+   python3 scripts/opencode_storage.py session adopt-global --dry-run
+   ```
+
+   It skips directories that no longer exist, symlinked paths, and directories inside a git or hg tree (V2 adopts those itself when it opens them). Use `--dir DIR` (repeatable) to limit the move.
+
+2. Tell the user to stop every OpenCode process, including the background service (`opencode service stop`) and any app that runs its own `opencode serve`, such as OpenChamber. The command refuses while one runs, because the service keeps session locations in memory.
+
+3. Have the user run, from a normal terminal:
+
+   ```bash
+   python3 scripts/opencode_storage.py session adopt-global --backup
+   ```
+
+4. After OpenCode restarts, ask the user to run `opencode session list` in a moved directory.
+
+The command refuses when the database is not V2, or when the newest V2 directory project does not follow the known id rule (a different OpenCode version). It also refuses when no directory project exists yet; then the user opens OpenCode once in any non-git directory and retries. The writes happen in one transaction, which rolls back when a moved count differs from the plan. To undo, restore the backup. Until `cleanup --purge-v1` runs, the V1 `session` table also still holds each session's original `project_id` and `path`.
 
 ## Tool Output
 

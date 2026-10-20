@@ -1,8 +1,9 @@
 # AGENTS.md
 
-An OpenCode skill that audits and cleans OpenCode's local storage. `SKILL.md` is
-the agent-facing contract; `README.md` is the human-facing one. Keep both in
-step with the CLI.
+An OpenCode skill that audits OpenCode's local storage and cleans or repairs it.
+`SKILL.md` is the agent-facing contract; `README.md` is the human-facing one.
+Keep both in step with the CLI. The `description` in `SKILL.md`'s frontmatter
+decides when agents load the skill: name every symptom a subcommand fixes there.
 
 ## Rules
 
@@ -17,12 +18,14 @@ step with the CLI.
   `session delete --format v2`, which goes through the OpenCode service and
   must be tested on a throwaway session.
 - Facts about OpenCode V2 internals (table roles, `event_sequence`, the
-  `migration.v1-v2` kv key) were read from the V2 binary. Re-check them
-  against a new OpenCode release before relying on them.
+  `migration.v1-v2` kv key, the directory project id `sha1("directory:" + path)`)
+  were read from the V2 binary. Re-check them against a new OpenCode release
+  before relying on them.
 
 ## Repo Shape
 
 - `scripts/opencode_storage.py`: command-line entry point that parses arguments for each subcommand.
+- `scripts/storage_adopt.py`: reassigns V1 global sessions to the V2 project of their directory.
 - `scripts/storage_audit.py`: builds and renders the read-only audit report.
 - `scripts/storage_backup.py`: writes verified backups before a destructive change.
 - `scripts/storage_cleanup.py`: runs the offline cleanup that ends in VACUUM.
@@ -57,6 +60,9 @@ L0 (read line by line):
    `--format auto`) and the confirmation logic in `_session_delete()`.
 8. `SKILL.md`: the approval and warning steps an agent must follow before any
    destructive command.
+9. `scripts/storage_adopt.py`: `project_id()`, `unavailable_reason()` (the id-rule
+   check), the skip rules in `_skip_reason()` and `build_plan()`, `apply()`, and the
+   process gate in `execute()`. Not the `render_*` functions or `summary()` (L2).
 
 L1: `scripts/storage_audit.py` (report contents), the estimates in `storage_v1.py`.
 L2: `scripts/storage_render.py`, the `render_*` functions, `README.md`.
@@ -66,10 +72,10 @@ L2: `scripts/storage_render.py`, the `render_*` functions, `README.md`.
 1. **No automated tests.** Every check so far was an ad-hoc script against a
    database copy. Destructive paths (`_purge`, `cleanup.run`, `session delete`)
    need fixture databases and assertions, for V1 and V2 layouts.
-2. **Command modules mix deletion logic with rendering.** `storage_cleanup.py`
-   and `storage_session.py` hold L0 logic and L2 `render_*` functions in one
-   file; `storage_audit.py` (about 530 logic lines) both builds and renders.
-   Move rendering out so L0 files hold only L0 code.
+2. **Command modules mix deletion logic with rendering.** `storage_cleanup.py`,
+   `storage_session.py`, and `storage_adopt.py` hold L0 logic and L2 `render_*`
+   functions in one file; `storage_audit.py` (about 530 logic lines) both builds
+   and renders. Move rendering out so L0 files hold only L0 code.
 3. **`storage_env.py` holds two concepts.** Path resolution and process
    detection change for different reasons.
 4. **Process detection matches by name.** `running_processes()` looks for

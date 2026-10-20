@@ -5,11 +5,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import sys
 from pathlib import Path
 
+import storage_adopt
 import storage_audit
 import storage_cleanup
+import storage_db
 import storage_env
 import storage_render
 import storage_session
@@ -100,7 +103,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="write a verified database backup and zip removed diff files (default: no backup)",
     )
 
-    session = subparsers.add_parser("session", parents=[common], help="act on one session")
+    session = subparsers.add_parser("session", parents=[common], help="act on sessions")
     session_commands = session.add_subparsers(dest="session_command", required=True)
     delete = session_commands.add_parser(
         "delete",
@@ -127,7 +130,75 @@ def build_parser() -> argparse.ArgumentParser:
         help="directory for timestamped backups (default: home directory)",
     )
     delete.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+
+    adopt = session_commands.add_parser(
+        "adopt-global",
+        parents=[common],
+        help="move V1 global sessions of non-git directories into their V2 directory projects",
+    )
+    adopt.add_argument(
+        "--dir",
+        action="append",
+        default=[],
+        metavar="DIR",
+        help="only this session directory (repeatable; default: all)",
+    )
+    adopt.add_argument("--dry-run", action="store_true", help="print the plan, change nothing")
+    adopt.add_argument("--backup", action="store_true", help="write a verified database backup first")
+    adopt.add_argument(
+        "--backup-dir",
+        type=Path,
+        default=Path.home(),
+        help="directory for timestamped backups (default: home directory)",
+    )
+    adopt.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     return parser
+
+
+def _confirm(question: str, args, errors) -> bool:
+    if args.yes:
+        return True
+    if not sys.stdin.isatty():
+        errors.error("error: no terminal to confirm; pass --yes")
+        return False
+    return input(f"\n{question} [y/N] ").strip().lower() == "y"
+
+
+def _session_adopt(args, data_dir: Path, console, use_json: bool) -> int:
+    artifacts = storage_env.Artifacts(data_dir)
+    errors = storage_render.Console(stream=sys.stderr)
+    if not artifacts.db_path.is_file():
+        errors.error(f"error: database not found: {artifacts.db_path}")
+        return 1
+    connection = storage_db.connect_readonly(artifacts.db_path)
+    try:
+        plan = storage_adopt.build_plan(connection, args.dir)
+    finally:
+        connection.close()
+    if not use_json:
+        storage_adopt.render_plan(plan, console)
+    if args.dry_run or plan["reason"] or not plan["moves"]:
+        if use_json:
+            print(json.dumps({"dry_run": True, "plan": plan}, indent=2, ensure_ascii=False))
+        elif not plan["reason"] and not plan["moves"]:
+            console.write("\n  nothing to move")
+        if args.dry_run and not use_json:
+            console.section("Dry run")
+            console.write("  " + console.yellow("nothing was modified"))
+        return 1 if plan["reason"] else 0
+    if not _confirm(f"Move {plan['sessions']} sessions?", args, errors):
+        console.write("aborted, nothing changed")
+        return 1
+    try:
+        result = storage_adopt.execute(artifacts, plan, args.backup, args.backup_dir)
+    except (storage_adopt.AdoptError, sqlite3.Error, OSError) as error:
+        errors.error(f"error: {error}")
+        return 1
+    if use_json:
+        print(json.dumps({"dry_run": False, "plan": plan, "result": result}, indent=2, ensure_ascii=False))
+    else:
+        storage_adopt.render_result(plan, result, console)
+    return 0
 
 
 def _session_delete(args, data_dir: Path, console, use_json: bool) -> int:
@@ -149,14 +220,9 @@ def _session_delete(args, data_dir: Path, console, use_json: bool) -> int:
 
     if not use_json:
         storage_session.render_plan(plan, console)
-    if not args.yes:
-        if not sys.stdin.isatty():
-            errors.error("error: no terminal to confirm; pass --yes")
-            return 1
-        answer = input(f"\nDelete {plan['session']['id']}? [y/N] ").strip().lower()
-        if answer != "y":
-            console.write("aborted, nothing changed")
-            return 1
+    if not _confirm(f"Delete {plan['session']['id']}?", args, errors):
+        console.write("aborted, nothing changed")
+        return 1
     try:
         result = storage_session.execute(artifacts, plan, args.backup, args.backup_dir)
     except (storage_session.SessionDeleteError, OSError) as error:
@@ -229,6 +295,8 @@ def main(argv=None) -> int:
 
     if args.command == "session" and args.session_command == "delete":
         return _session_delete(args, data_dir, console, use_json)
+    if args.command == "session" and args.session_command == "adopt-global":
+        return _session_adopt(args, data_dir, console, use_json)
 
     return 2
 
