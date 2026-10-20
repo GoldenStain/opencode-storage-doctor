@@ -13,7 +13,7 @@ One entry point, standard-library Python only:
 
 ```bash
 python3 scripts/opencode_storage.py audit   [--top N] [--oversized-mib N]
-python3 scripts/opencode_storage.py cleanup [--clear-events] [--delete-orphan-diffs] [--dry-run]
+python3 scripts/opencode_storage.py cleanup [--clear-events] [--delete-orphan-diffs] [--purge-v1] [--dry-run]
 ```
 
 Shared options on both subcommands:
@@ -49,16 +49,20 @@ Resolve script paths relative to this skill directory. Do not assume copies exis
 2. Report these findings to the user:
 
    - Total OpenCode data size and per-entry sizes under the data directory.
-   - Physical SQLite size, WAL size, freelist bytes, clearable event bytes, and the combined reclaimable percentage.
+   - Physical SQLite size, WAL size, freelist bytes, clearable event bytes, V1 residue bytes, and the combined reclaimable percentage.
    - Largest database tables or indexes.
    - Largest sessions ranked by message, part, event, and `session_diff` bytes,
-     each cell showing the row count and its byte size.
+     each cell showing the row count and its byte size. On V2 databases these
+     come from `session_v2` and `session_message`, and parts show 0 because V2
+     stores them inside messages.
    - Oversized individual messages, including their session IDs and titles.
    - Orphan `session_diff` files.
    - Event-log size, including events whose session no longer exists.
+   - V2 databases only: V1 residue, meaning V1 rows and `session_diff` files of
+     sessions that V2 has already migrated, and any V1 sessions that V2 lacks.
    - Largest `tool-output` files.
 
-3. Explain the difference between logical deletion and physical shrinkage. SQLite `DELETE` adds pages to the freelist; only `VACUUM` returns that space to the filesystem. Reclaimable space is `freelist + event rows`, so `--clear-events` is usually the largest single win.
+3. Explain the difference between logical deletion and physical shrinkage. SQLite `DELETE` adds pages to the freelist; only `VACUUM` returns that space to the filesystem. Reclaimable space is `freelist + event rows + V1 residue rows`. On a database upgraded from V1, `--purge-v1` is usually the largest single win.
 
 4. Never print message, part, event, diff, or tool-output contents. Use metadata and byte lengths only.
 
@@ -88,6 +92,11 @@ Any direct SQL modification to messages, sessions, parts, or event data is destr
 
    - `--clear-events`: delete `event` rows, plus `event_sequence` on V1 databases only. Warn that this discards persistent event history and may affect present or future synchronization behavior. On V2 databases `event_sequence` is kept: V2 numbers new session messages from it, and clearing it would break every existing session.
    - `--delete-orphan-diffs`: archive, then remove `session_diff` files with no corresponding live session.
+   - `--purge-v1` (V2 databases only): delete the `session`, `message`, `part`, `todo`, and `session_share` rows, and the `session_diff` files, of every V1 session that V2 has migrated. A session counts as migrated when `session_v2` holds it and, if it had V1 messages, `session_message` holds at least one of its messages. Other V1 sessions are kept. The tables stay, empty. The script refuses when V2 has not completed its V1->V2 migration, or when an unknown table has a foreign key to these tables.
+     Warn the user before approval:
+     - This removes the only lossless copy of V1 history. V2's migration dropped some of it, for example the output of compacted tool calls and per-step metadata.
+     - V2 sessions do not change.
+     - Restoring needs a database backup from before the purge. Pass `--backup` to write one, together with a zip of the removed diffs.
 
 2. Show a dry run first. It is read-only, needs no exclusive access, and lists exactly which rows and files would be removed with the estimated reclaim:
 
@@ -123,7 +132,7 @@ Keeping the backup for one or two days is a reasonable precaution.
 State:
 
 - Before and after disk usage.
-- Reclaimed database, event, orphan-diff, and tool-output bytes separately.
+- Reclaimed database, event, V1-residue, orphan-diff, and tool-output bytes separately.
 - Sessions removed or surgically modified.
 - Backup path and when it can be deleted.
 - Any remaining large objects or expected growth sources.

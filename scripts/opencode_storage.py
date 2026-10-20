@@ -77,6 +77,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="archive then delete session_diff files without a live session",
     )
     cleanup.add_argument(
+        "--purge-v1",
+        action="store_true",
+        help="delete V1 session/message/part/todo/session_share rows and session_diff "
+        "files of sessions already migrated to V2",
+    )
+    cleanup.add_argument(
         "--backup-dir",
         type=Path,
         default=Path.home(),
@@ -134,6 +140,7 @@ def main(argv=None) -> int:
                 backup_dir=args.backup_dir,
                 dry_run=args.dry_run,
                 to_backup=args.backup,
+                purge_v1=args.purge_v1,
             )
         except storage_cleanup.CleanupError as error:
             storage_render.Console(stream=sys.stderr).error(f"error: {error}")

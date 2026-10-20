@@ -9,6 +9,7 @@ from pathlib import Path
 import storage_db
 import storage_env
 import storage_render as render
+import storage_v1
 
 
 MESSAGE_DETAIL_LIMIT = 50
@@ -230,6 +231,7 @@ def build_report(
         "orphan_diffs": {"count": 0, "bytes": 0, "files": []},
         "events": {"present": False, "count": 0, "bytes": 0, "orphan_count": 0, "orphan_bytes": 0},
         "tool_output": {"count": 0, "bytes": 0, "files": []},
+        "v1_residue": None,
     }
 
     if not artifacts.db_path.is_file():
@@ -240,6 +242,15 @@ def build_report(
     try:
         report["database"] = _database_report(connection)
         report["database"]["present"] = True
+        if storage_db.is_v2_layout(connection):
+            residue = storage_v1.residue(connection, artifacts)
+            report["v1_residue"] = residue
+            database = report["database"]
+            database["reclaimable_bytes"] += residue["bytes"]
+            if database["physical_bytes"]:
+                database["reclaimable_ratio"] = min(
+                    1.0, database["reclaimable_bytes"] / database["physical_bytes"]
+                )
         sessions, live_sessions = _session_report(connection, artifacts)
         report["session_count"] = len(sessions)
         report["sessions"] = sessions[:top]
@@ -430,6 +441,13 @@ def render_report(report: dict, console: render.Console) -> None:
             render.human_bytes(database["clearable_event_bytes"])
             + console.dim("  event rows, --clear-events"),
         )
+        residue = report.get("v1_residue")
+        if residue is not None:
+            console.line(
+                "v1 residue",
+                render.human_bytes(residue["bytes"])
+                + console.dim("  migrated V1 rows, --purge-v1"),
+            )
         console.line(
             "reclaimable",
             console.green(render.human_bytes(database["reclaimable_bytes"]))
@@ -536,6 +554,34 @@ def render_report(report: dict, console: render.Console) -> None:
             f"{render.human_bytes(events['orphan_bytes'])}"
         )
         console.write(console.dim(detail) if not events["orphan_count"] else console.yellow(detail))
+
+    residue = report.get("v1_residue")
+    if residue is not None:
+        console.section("V1 residue")
+        if residue["reason"]:
+            console.warning(f"  purge unavailable: {residue['reason']}")
+        elif not residue["available"]:
+            console.write("  " + console.dim("no V1 tables left"))
+        else:
+            console.write(
+                f"  {render.human_count(residue['sessions'])} migrated sessions · "
+                f"{render.human_count(residue['rows'])} rows · "
+                f"{render.human_bytes(residue['bytes'])}"
+                + console.dim("  removable with --purge-v1")
+            )
+            for name, item in residue["tables"].items():
+                console.write(
+                    f"    {name:<14}{_amount(item['rows'], item['bytes'])}"
+                )
+            diffs = residue["diffs"]
+            console.write(
+                f"    {'session_diff':<14}{render.human_count(diffs['count'])} files · "
+                f"{render.human_bytes(diffs['bytes'])}"
+            )
+            if residue["unmigrated_sessions"]:
+                console.warning(
+                    f"  {residue['unmigrated_sessions']} V1 sessions are not in V2 and are kept"
+                )
 
     tool = report["tool_output"]
     console.section("Tool output")

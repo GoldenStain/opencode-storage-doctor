@@ -10,6 +10,7 @@ from pathlib import Path
 import storage_db
 import storage_env
 import storage_render as render
+import storage_v1
 
 
 class CleanupError(Exception):
@@ -53,7 +54,10 @@ def _archive_and_remove(paths: list[Path], archive: Path, to_backup: bool) -> No
 
 
 def build_plan(
-    artifacts: storage_env.Artifacts, clear_events: bool, delete_orphan_diffs: bool
+    artifacts: storage_env.Artifacts,
+    clear_events: bool,
+    delete_orphan_diffs: bool,
+    purge_v1: bool = False,
 ) -> dict:
     """Describe what cleanup would remove, without modifying anything."""
     plan = {
@@ -71,6 +75,7 @@ def build_plan(
             "bytes": 0,
             "files": [],
         },
+        "purge_v1": {"enabled": bool(purge_v1)},
         "estimated_reclaim_bytes": 0,
     }
 
@@ -88,6 +93,8 @@ def build_plan(
                 plan["clear_events"]["bytes"] = storage_db.scalar(
                     connection, "SELECT COALESCE(SUM(LENGTH(data)), 0) FROM event"
                 )
+            if purge_v1:
+                plan["purge_v1"].update(storage_v1.residue(connection, artifacts))
         finally:
             connection.close()
 
@@ -107,6 +114,8 @@ def build_plan(
         plan["freelist_bytes"]
         + plan["clear_events"]["bytes"]
         + plan["orphan_diffs"]["bytes"]
+        + plan["purge_v1"].get("bytes", 0)
+        + plan["purge_v1"].get("diffs", {}).get("bytes", 0)
     )
     return plan
 
@@ -118,10 +127,11 @@ def run(
     backup_dir: Path,
     dry_run: bool = False,
     to_backup: bool = False,
+    purge_v1: bool = False,
 ) -> dict:
     """Back up the database, optionally clean it, and VACUUM it back to the filesystem."""
     processes = storage_env.running_processes()
-    plan = build_plan(artifacts, clear_events, delete_orphan_diffs)
+    plan = build_plan(artifacts, clear_events, delete_orphan_diffs, purge_v1)
     if dry_run:
         return {
             "dry_run": True,
@@ -143,6 +153,8 @@ def run(
     backup_dir = Path(backup_dir).expanduser()
     if not backup_dir.is_dir():
         raise CleanupError(f"backup directory not found: {backup_dir}")
+    if purge_v1 and plan["purge_v1"].get("reason"):
+        raise CleanupError(f"--purge-v1 refused: {plan['purge_v1']['reason']}")
 
     stamp = _timestamp()
     backup = backup_dir / f"opencode.db.pre-cleanup-{stamp}.bak"
@@ -150,6 +162,8 @@ def run(
     _backup_database(artifacts.db_path, backup, to_backup)
 
     events = {"deleted": False, "rows": 0, "bytes": 0}
+    v1 = {"deleted": False, "sessions": 0, "tables": {}}
+    purged_ids: set[str] = set()
     live_sessions: set[str] = set()
     integrity = "unknown"
     connection = sqlite3.connect(artifacts.db_path, timeout=10)
@@ -173,6 +187,14 @@ def run(
                 connection.execute("DELETE FROM event_sequence")
             connection.commit()
             events["deleted"] = True
+
+        if purge_v1:
+            try:
+                removed = storage_v1.purge(connection)
+            except storage_v1.PurgeError as error:
+                raise CleanupError(f"--purge-v1 refused: {error}") from error
+            purged_ids = removed["session_ids"]
+            v1 = {"deleted": True, "sessions": len(purged_ids), "tables": removed["tables"]}
 
         connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
         connection.execute("VACUUM")
@@ -203,6 +225,18 @@ def run(
                 "archive": str(archive) if to_backup else "None",
             }
 
+    v1["diffs"] = {"count": 0, "bytes": 0, "archive": None}
+    v1_diff_paths = storage_v1.diff_paths(artifacts, purged_ids)
+    if v1_diff_paths:
+        archive = backup_dir / f"opencode-v1-session-diffs-{stamp}.zip"
+        bytes_total = sum(path.stat().st_size for path in v1_diff_paths)
+        _archive_and_remove(v1_diff_paths, archive, to_backup)
+        v1["diffs"] = {
+            "count": len(v1_diff_paths),
+            "bytes": bytes_total,
+            "archive": str(archive) if to_backup else None,
+        }
+
     after = artifacts.db_path.stat().st_size
     wal_after = artifacts.wal_path.stat().st_size if artifacts.wal_path.exists() else 0
 
@@ -218,6 +252,7 @@ def run(
         "backup_bytes": backup_bytes,
         "events": events,
         "orphans": orphans,
+        "v1": v1,
         "integrity": integrity,
         "freelist_bytes": plan["freelist_bytes"],
     }
@@ -262,6 +297,24 @@ def render_plan(
         f"{render.human_count(orphans['count'])} files · {render.human_bytes(orphans['bytes'])}",
         "--delete-orphan-diffs" if orphans["enabled"] else "(not enabled)",
     )
+    v1 = plan["purge_v1"]
+    if not v1["enabled"]:
+        table.add("V1 residue", "-", "(not enabled)")
+    elif v1.get("reason"):
+        table.add("V1 residue", console.red(f"refused: {v1['reason']}"), "--purge-v1")
+    else:
+        table.add(
+            "V1 residue",
+            f"{render.human_count(v1['sessions'])} sessions · "
+            f"{render.human_count(v1['rows'])} rows · {render.human_bytes(v1['bytes'])}",
+            "--purge-v1",
+        )
+        table.add(
+            "V1 diffs",
+            f"{render.human_count(v1['diffs']['count'])} files · "
+            f"{render.human_bytes(v1['diffs']['bytes'])}",
+            "--purge-v1",
+        )
     table.add("freelist pages", render.human_bytes(plan["freelist_bytes"]), "VACUUM")
     table.add(
         "reclaimable total",
@@ -269,6 +322,13 @@ def render_plan(
         "",
     )
     table.write(console)
+    if v1["enabled"] and v1.get("unmigrated_sessions"):
+        console.write(
+            "  "
+            + console.yellow(
+                f"! {v1['unmigrated_sessions']} V1 sessions are not in V2 and will be kept"
+            )
+        )
     console.write("")
     console.write(
         console.dim("  backup would be written to ") + console.dim(str(backup_dir))
@@ -301,6 +361,23 @@ def render_result(result: dict, console: render.Console) -> None:
         )
     else:
         console.write("  " + console.dim("· events left untouched"))
+    v1 = result["v1"]
+    if v1["deleted"]:
+        rows = sum(v1["tables"].values())
+        console.write(
+            "  "
+            + console.green("✓")
+            + f" V1 rows of {render.human_count(v1['sessions'])} migrated sessions deleted"
+            + console.dim(f"  {render.human_count(rows)} rows")
+        )
+        console.write(
+            "  "
+            + console.green("✓")
+            + f" {v1['diffs']['count']} V1 session diffs removed"
+            + console.dim(f"  {v1['diffs']['archive'] or 'no archive'}")
+        )
+    else:
+        console.write("  " + console.dim("· V1 residue left untouched"))
     console.write("  " + console.green("✓") + " WAL checkpointed and VACUUMed")
     console.write("  " + console.green("✓") + f" integrity_check={result['integrity']}")
     orphans = result["orphans"]

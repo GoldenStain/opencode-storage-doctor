@@ -34,7 +34,7 @@ ln -s "$PWD/opencode-storage-audit" ~/.config/opencode/skills/opencode-storage-a
 
 ```bash
 python3 scripts/opencode_storage.py audit   [--top N] [--oversized-mib N]
-python3 scripts/opencode_storage.py cleanup [--clear-events] [--delete-orphan-diffs] [--dry-run]
+python3 scripts/opencode_storage.py cleanup [--clear-events] [--delete-orphan-diffs] [--purge-v1] [--dry-run]
 ```
 
 Shared options: `--data-dir PATH`, `--json`, `--no-color`.
@@ -52,7 +52,10 @@ Reports:
 - Oversized individual messages, including session IDs and titles.
 - Orphan `session_diff` files.
 - Event-log size, including events whose session no longer exists.
+- V2 databases: V1 residue, meaning V1 rows and `session_diff` files of sessions V2 has already migrated.
 - Largest `tool-output` files.
+
+On V2 databases, sessions and messages come from `session_v2` and `session_message`.
 
 #### cleanup (destructive)
 
@@ -60,6 +63,7 @@ Reports:
 - Creates and integrity-checks a timestamped backup (`opencode.db.pre-cleanup-<timestamp>.bak`) before touching anything.
 - `--clear-events`: delete `event` rows, plus `event_sequence` on V1 databases only (V2 numbers new session messages from `event_sequence`, so it is kept there).
 - `--delete-orphan-diffs`: archive, then remove `session_diff` files with no corresponding live session.
+- `--purge-v1` (V2 databases only): delete the V1 `session`, `message`, `part`, `todo`, and `session_share` rows, and the `session_diff` files, of sessions that V2 has already migrated. The tables are kept empty. V1 sessions missing from V2 are kept. Refuses when V2's V1->V2 migration is not completed. This removes the only lossless copy of V1 history; pass `--backup` if you may need it again.
 - Then: pre-VACUUM `quick_check`, WAL checkpoint, `VACUUM`, post-`integrity_check`.
 
 Always dry-run first (read-only, no flags needed beyond the ones you plan to use), then exit every OpenCode process and re-run without `--dry-run`.
@@ -78,7 +82,7 @@ The audit never reads or prints message, part, event, diff, or tool-output conte
 
 ### Notes
 
-- Logical deletion is not physical shrink: SQLite `DELETE` only returns pages to the freelist; only `VACUUM` gives that space back to the filesystem. Reclaimable space = `freelist + event rows`.
+- Logical deletion is not physical shrink: SQLite `DELETE` only returns pages to the freelist; only `VACUUM` gives that space back to the filesystem. Reclaimable space = `freelist + event rows + V1 residue rows`.
 - Keep the backup for a day or two; delete it once `integrity_check` is `ok`, OpenCode starts normally, retained sessions open, and you no longer need the deleted history.
 
 ### License
@@ -117,7 +121,7 @@ ln -s "$PWD/opencode-storage-audit" ~/.config/opencode/skills/opencode-storage-a
 
 ```bash
 python3 scripts/opencode_storage.py audit   [--top N] [--oversized-mib N]
-python3 scripts/opencode_storage.py cleanup [--clear-events] [--delete-orphan-diffs] [--dry-run]
+python3 scripts/opencode_storage.py cleanup [--clear-events] [--delete-orphan-diffs] [--purge-v1] [--dry-run]
 ```
 
 通用选项：`--data-dir PATH`、`--json`、`--no-color`。
@@ -135,7 +139,10 @@ python3 scripts/opencode_storage.py cleanup [--clear-events] [--delete-orphan-di
 - 体积异常的单条消息（含会话 ID 与标题）。
 - 孤儿 `session_diff` 文件。
 - 事件日志大小，包含所属会话已不存在的事件。
+- V2 数据库：V1 残留，即 V2 已迁移会话的 V1 行与 `session_diff` 文件。
 - 最大的 `tool-output` 文件。
+
+在 V2 数据库上，会话与消息统计读取 `session_v2` 与 `session_message`。
 
 #### cleanup（破坏性）
 
@@ -143,6 +150,7 @@ python3 scripts/opencode_storage.py cleanup [--clear-events] [--delete-orphan-di
 - 改动前先创建带时间戳的备份（`opencode.db.pre-cleanup-<时间戳>.bak`）并做完整性校验。
 - `--clear-events`：删除 `event` 行；仅在 V1 数据库上同时删除 `event_sequence`（V2 用 `event_sequence` 给新消息编号，所以保留）。
 - `--delete-orphan-diffs`：先归档，再删除没有对应存活会话的 `session_diff` 文件。
+- `--purge-v1`（仅限 V2 数据库）：删除 V2 已迁移会话在 V1 `session`、`message`、`part`、`todo`、`session_share` 表中的行，以及它们的 `session_diff` 文件。表本身保留为空表。V2 中没有的 V1 会话会保留。V2 的 V1→V2 迁移未完成时拒绝执行。这会删掉 V1 历史唯一的无损副本；如果以后可能还需要，请加 `--backup`。
 - 随后依次执行：VACUUM 前 `quick_check`、WAL checkpoint、`VACUUM`、VACUUM 后 `integrity_check`。
 
 务必先 dry-run（只读，不会修改任何东西），确认后再退出所有 OpenCode 进程、去掉 `--dry-run` 正式执行。
@@ -161,7 +169,7 @@ python3 scripts/opencode_storage.py cleanup --clear-events --delete-orphan-diffs
 
 ### 说明
 
-- 逻辑删除不等于物理缩小：SQLite 的 `DELETE` 只把页还给 freelist，只有 `VACUUM` 才能把空间真正还给文件系统。可回收空间 = `freelist + 事件行`。
+- 逻辑删除不等于物理缩小：SQLite 的 `DELETE` 只把页还给 freelist，只有 `VACUUM` 才能把空间真正还给文件系统。可回收空间 = `freelist + 事件行 + V1 残留行`。
 - 备份建议保留一两天；待 `integrity_check` 为 `ok`、OpenCode 正常启动、保留的会话都能打开、且不再需要被删历史后，再删除备份。
 
 ### 许可
