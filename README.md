@@ -58,7 +58,7 @@ Reports:
 
 - Refuses to run while any `opencode` process is alive (VACUUM requires exclusive database access) and names the offending PIDs.
 - Creates and integrity-checks a timestamped backup (`opencode.db.pre-cleanup-<timestamp>.bak`) before touching anything.
-- `--clear-events`: delete `event` and `event_sequence` rows — usually the largest single win.
+- `--clear-events`: delete `event` rows, plus `event_sequence` on V1 databases only (V2 numbers new session messages from `event_sequence`, so it is kept there).
 - `--delete-orphan-diffs`: archive, then remove `session_diff` files with no corresponding live session.
 - Then: pre-VACUUM `quick_check`, WAL checkpoint, `VACUUM`, post-`integrity_check`.
 
@@ -141,7 +141,7 @@ python3 scripts/opencode_storage.py cleanup [--clear-events] [--delete-orphan-di
 
 - OpenCode 进程存活时**拒绝运行**（VACUUM 需要独占数据库访问），并列出占用进程的 PID。
 - 改动前先创建带时间戳的备份（`opencode.db.pre-cleanup-<时间戳>.bak`）并做完整性校验。
-- `--clear-events`：删除 `event` 与 `event_sequence` 行——通常是单项收益最大的清理。
+- `--clear-events`：删除 `event` 行；仅在 V1 数据库上同时删除 `event_sequence`（V2 用 `event_sequence` 给新消息编号，所以保留）。
 - `--delete-orphan-diffs`：先归档，再删除没有对应存活会话的 `session_diff` 文件。
 - 随后依次执行：VACUUM 前 `quick_check`、WAL checkpoint、`VACUUM`、VACUUM 后 `integrity_check`。
 

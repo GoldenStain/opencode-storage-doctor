@@ -69,7 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
     cleanup.add_argument(
         "--clear-events",
         action="store_true",
-        help="delete event and event_sequence rows before VACUUM",
+        help="delete event rows (and event_sequence on V1 databases) before VACUUM",
     )
     cleanup.add_argument(
         "--delete-orphan-diffs",

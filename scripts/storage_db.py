@@ -24,6 +24,13 @@ def table_exists(connection: sqlite3.Connection, table: str) -> bool:
     )
 
 
+def is_v2_layout(connection: sqlite3.Connection) -> bool:
+    """Return True when the database holds OpenCode V2 session tables."""
+    return table_exists(connection, "session_v2") and table_exists(
+        connection, "session_message"
+    )
+
+
 def page_metrics(connection: sqlite3.Connection) -> dict:
     """Return SQLite page geometry and freelist bytes for the database."""
     page_size = scalar(connection, "PRAGMA page_size")

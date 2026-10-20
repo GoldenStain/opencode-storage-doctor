@@ -167,7 +167,11 @@ def run(
                 connection, "SELECT COALESCE(SUM(LENGTH(data)), 0) FROM event"
             )
             connection.execute("DELETE FROM event")
-            if storage_db.table_exists(connection, "event_sequence"):
+            # V2 numbers new session_message rows from event_sequence; clearing it
+            # makes them collide with the UNIQUE (session_id, seq) index.
+            if storage_db.table_exists(
+                connection, "event_sequence"
+            ) and not storage_db.is_v2_layout(connection):
                 connection.execute("DELETE FROM event_sequence")
             connection.commit()
             events["deleted"] = True

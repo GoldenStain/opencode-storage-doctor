@@ -86,7 +86,7 @@ Any direct SQL modification to messages, sessions, parts, or event data is destr
 
 1. Decide which optional cleanup flags are approved:
 
-   - `--clear-events`: delete `event` and `event_sequence`. Warn that this discards persistent event history and may affect present or future synchronization behavior.
+   - `--clear-events`: delete `event` rows, plus `event_sequence` on V1 databases only. Warn that this discards persistent event history and may affect present or future synchronization behavior. On V2 databases `event_sequence` is kept: V2 numbers new session messages from it, and clearing it would break every existing session.
    - `--delete-orphan-diffs`: archive, then remove `session_diff` files with no corresponding live session.
 
 2. Show a dry run first. It is read-only, needs no exclusive access, and lists exactly which rows and files would be removed with the estimated reclaim:
