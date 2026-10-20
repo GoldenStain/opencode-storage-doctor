@@ -1,4 +1,4 @@
-"""Open OpenCode's SQLite database read-only and query which tables hold its sessions."""
+"""Run small read-only queries against OpenCode's SQLite database."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Render audit and cleanup reports as aligned, optionally colored terminal text."""
+"""Render reports as aligned, optionally colored terminal text."""
 
 from __future__ import annotations
 
