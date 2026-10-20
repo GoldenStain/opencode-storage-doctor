@@ -1,4 +1,4 @@
-"""Measure and delete V1 conversation data that OpenCode V2 has already migrated."""
+"""Clear leftover V1 conversation data out of an OpenCode V2 database."""
 
 from __future__ import annotations
 
@@ -25,6 +25,8 @@ MIGRATED_SQL = """
             OR EXISTS (SELECT 1 FROM session_message x WHERE x.session_id = s.id))
 """
 BYTES_COLUMN = {"message": "data", "part": "data", "todo": "content"}
+# An explicit list of session ids, passed as one JSON array parameter.
+IDS_SQL = "SELECT value FROM json_each(?)"
 
 
 class PurgeError(Exception):
@@ -168,6 +170,27 @@ def _v2_counts(connection: sqlite3.Connection) -> tuple[int, int]:
 
 def purge(connection: sqlite3.Connection) -> dict:
     """Delete V1 rows of migrated sessions in one transaction; return what was removed."""
+    return _purge(connection, MIGRATED_SQL)
+
+
+def session_residue(
+    connection: sqlite3.Connection, artifacts: storage_env.Artifacts, session_ids: list[str]
+) -> dict:
+    """Count V1 rows and session_diff files of the given sessions, migrated or not."""
+    result = {"tables": {}, "rows": 0, "bytes": 0}
+    if storage_db.table_exists(connection, "session"):
+        result = _measure(connection, IDS_SQL, (json.dumps(session_ids),))
+    paths = diff_paths(artifacts, set(session_ids))
+    result["diffs"] = {"count": len(paths), "bytes": sum(path.stat().st_size for path in paths)}
+    return result
+
+
+def purge_session(connection: sqlite3.Connection, session_ids: list[str]) -> dict:
+    """Delete V1 rows of the given sessions in one transaction; return what was removed."""
+    return _purge(connection, IDS_SQL, (json.dumps(session_ids),))
+
+
+def _purge(connection: sqlite3.Connection, source: str, parameters=()) -> dict:
     reason = unavailable_reason(connection)
     if reason is not None:
         raise PurgeError(reason)
@@ -176,11 +199,16 @@ def purge(connection: sqlite3.Connection) -> dict:
 
     if connection.in_transaction:
         connection.commit()
+    # IMMEDIATE takes the write lock now, so no other writer can change the
+    # V2 counts checked below, even while OpenCode is running.
     connection.execute("BEGIN IMMEDIATE")
     try:
         before = _v2_counts(connection)
         connection.execute("DROP TABLE IF EXISTS temp.purge_v1")
-        connection.execute(f"CREATE TEMP TABLE purge_v1 AS {MIGRATED_SQL}")
+        connection.execute("CREATE TEMP TABLE purge_v1 (id TEXT PRIMARY KEY)")
+        connection.execute(
+            f"INSERT OR IGNORE INTO temp.purge_v1 SELECT * FROM ({source})", tuple(parameters)
+        )
         session_ids = {row[0] for row in connection.execute("SELECT id FROM temp.purge_v1")}
         deleted = {}
         for table in TABLES:

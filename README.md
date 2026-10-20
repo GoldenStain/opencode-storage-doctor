@@ -35,6 +35,7 @@ ln -s "$PWD/opencode-storage-audit" ~/.config/opencode/skills/opencode-storage-a
 ```bash
 python3 scripts/opencode_storage.py audit   [--top N] [--oversized-mib N]
 python3 scripts/opencode_storage.py cleanup [--clear-events] [--delete-orphan-diffs] [--purge-v1] [--dry-run]
+python3 scripts/opencode_storage.py session delete ID [--format auto|v1|v2] [--dry-run] [--backup] [--yes]
 ```
 
 Shared options: `--data-dir PATH`, `--json`, `--no-color`.
@@ -75,6 +76,16 @@ python3 scripts/opencode_storage.py cleanup --clear-events --delete-orphan-diffs
 # 2. after exiting all OpenCode processes
 python3 scripts/opencode_storage.py cleanup --clear-events --delete-orphan-diffs
 ```
+
+#### session delete (destructive)
+
+Deletes one session and its child sessions, chosen by full id or unique prefix. Asks for confirmation unless `--yes` is given; `--dry-run` only prints the plan.
+
+- `--format v2`: delete the V2 session through `opencode session delete` (needs the OpenCode service, default data directory only).
+- `--format v1`: delete the session's V1 rows and `storage/session_diff` file. Works while OpenCode runs.
+- `--format auto` (default): run both steps that apply, V2 first.
+- `--backup`: write a verified database backup and zip the removed diff file first.
+- Refuses to delete the session that runs it, and warns when a session exists only as V1 data.
 
 ### Privacy
 
@@ -122,6 +133,7 @@ ln -s "$PWD/opencode-storage-audit" ~/.config/opencode/skills/opencode-storage-a
 ```bash
 python3 scripts/opencode_storage.py audit   [--top N] [--oversized-mib N]
 python3 scripts/opencode_storage.py cleanup [--clear-events] [--delete-orphan-diffs] [--purge-v1] [--dry-run]
+python3 scripts/opencode_storage.py session delete ID [--format auto|v1|v2] [--dry-run] [--backup] [--yes]
 ```
 
 通用选项：`--data-dir PATH`、`--json`、`--no-color`。
@@ -162,6 +174,16 @@ python3 scripts/opencode_storage.py cleanup --clear-events --delete-orphan-diffs
 # 2. 退出所有 OpenCode 进程后
 python3 scripts/opencode_storage.py cleanup --clear-events --delete-orphan-diffs
 ```
+
+#### session delete（破坏性）
+
+按完整 id 或唯一前缀删除一个会话及其子会话。不加 `--yes` 时会要求确认；`--dry-run` 只打印计划。
+
+- `--format v2`：通过 `opencode session delete` 删除 V2 会话（需要 OpenCode 服务在运行，且只支持默认数据目录）。
+- `--format v1`：删除该会话的 V1 行与 `storage/session_diff` 文件。OpenCode 运行时也可执行。
+- `--format auto`（默认）：执行所有适用的步骤，先 V2 后 V1。
+- `--backup`：先写一份带校验的数据库备份，并把被删的 diff 文件打包成 zip。
+- 拒绝删除正在运行本命令的会话；会话只存在于 V1 数据中时会给出警告。
 
 ### 隐私
 

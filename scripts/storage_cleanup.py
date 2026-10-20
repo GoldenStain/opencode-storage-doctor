@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import datetime
 import sqlite3
-import zipfile
 from pathlib import Path
 
+import storage_backup
 import storage_db
 import storage_env
 import storage_render as render
@@ -17,40 +16,20 @@ class CleanupError(Exception):
     """A cleanup precondition failed or an operation could not complete."""
 
 
-def _timestamp() -> str:
-    return datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-
-
 def _backup_database(db_path: Path, backup: Path, to_backup: bool) -> None:
     if not to_backup:
         return
-    source = storage_db.connect_readonly(db_path)
-    destination = sqlite3.connect(backup)
     try:
-        source.backup(destination, pages=4096)
-        check = destination.execute("PRAGMA integrity_check").fetchone()[0]
-    finally:
-        destination.close()
-        source.close()
-    if check != "ok":
-        backup.unlink(missing_ok=True)
-        raise CleanupError(f"backup integrity_check failed: {check}")
+        storage_backup.backup_database(db_path, backup)
+    except storage_backup.BackupError as error:
+        raise CleanupError(str(error)) from error
 
 
 def _archive_and_remove(paths: list[Path], archive: Path, to_backup: bool) -> None:
-    if to_backup:
-        with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as output:
-            for path in paths:
-                output.write(path, arcname=path.name)
-        with zipfile.ZipFile(archive) as verify:
-            if verify.testzip() is not None:
-                raise CleanupError(
-                    f"orphan diff archive failed verification: {archive}"
-                )
-            if len(verify.namelist()) != len(paths):
-                raise CleanupError(f"orphan diff archive count mismatch: {archive}")
-    for path in paths:
-        path.unlink()
+    try:
+        storage_backup.archive_and_remove(paths, archive if to_backup else None)
+    except storage_backup.BackupError as error:
+        raise CleanupError(str(error)) from error
 
 
 def build_plan(
@@ -157,7 +136,7 @@ def run(
     if purge_v1 and plan["purge_v1"].get("reason"):
         raise CleanupError(f"--purge-v1 refused: {plan['purge_v1']['reason']}")
 
-    stamp = _timestamp()
+    stamp = storage_backup.timestamp()
     backup = backup_dir / f"opencode.db.pre-cleanup-{stamp}.bak"
     before = artifacts.db_path.stat().st_size
     _backup_database(artifacts.db_path, backup, to_backup)

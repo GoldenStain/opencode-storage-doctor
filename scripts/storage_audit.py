@@ -26,17 +26,6 @@ def _amount(count: int, size: int) -> str:
     return f"{render.human_count(count)} · {render.human_bytes(size)}"
 
 
-def _resolve_session(sessions: list[dict], query: str) -> tuple[dict | None, list[dict]]:
-    """Match a session by exact id or unique prefix, returning it plus any ambiguity."""
-    exact = [session for session in sessions if session["id"] == query]
-    if exact:
-        return exact[0], []
-    matches = [session for session in sessions if session["id"].startswith(query)]
-    if len(matches) == 1:
-        return matches[0], []
-    return None, matches
-
-
 def _session_detail(connection: sqlite3.Connection, session: dict) -> dict:
     """Collect metadata and the largest messages for one session."""
     session_id = session["id"]
@@ -256,7 +245,7 @@ def build_report(
         report["sessions"] = sessions[:top]
 
         if session:
-            matched, matches = _resolve_session(sessions, session)
+            matched, matches = storage_db.resolve_session(sessions, session)
             if matched is not None:
                 report["session_detail"] = _session_detail(connection, matched)
             else:

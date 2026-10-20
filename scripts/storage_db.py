@@ -1,4 +1,4 @@
-"""Open OpenCode's SQLite database read-only and run small introspection queries."""
+"""Open OpenCode's SQLite database read-only and query which tables hold its sessions."""
 
 from __future__ import annotations
 
@@ -41,6 +41,17 @@ def session_tables(connection: sqlite3.Connection) -> tuple[str, str, str | None
 def live_session_ids(connection: sqlite3.Connection) -> set[str]:
     session_table = session_tables(connection)[0]
     return {row[0] for row in connection.execute(f"SELECT id FROM {session_table}")}
+
+
+def resolve_session(sessions: list[dict], query: str) -> tuple[dict | None, list[dict]]:
+    """Match a session by exact id or unique prefix, returning it plus any ambiguity."""
+    exact = [session for session in sessions if session["id"] == query]
+    if exact:
+        return exact[0], []
+    matches = [session for session in sessions if session["id"].startswith(query)]
+    if len(matches) == 1:
+        return matches[0], []
+    return None, matches
 
 
 def page_metrics(connection: sqlite3.Connection) -> dict:

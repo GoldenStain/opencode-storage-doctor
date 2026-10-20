@@ -12,6 +12,7 @@ import storage_audit
 import storage_cleanup
 import storage_env
 import storage_render
+import storage_session
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -98,7 +99,74 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="write a verified database backup and zip removed diff files (default: no backup)",
     )
+
+    session = subparsers.add_parser("session", parents=[common], help="act on one session")
+    session_commands = session.add_subparsers(dest="session_command", required=True)
+    delete = session_commands.add_parser(
+        "delete",
+        parents=[common],
+        help="delete one session and its child sessions from V2 and/or V1 data",
+    )
+    delete.add_argument("session_id", metavar="ID", help="full session id or unique prefix")
+    delete.add_argument(
+        "--format",
+        choices=storage_session.FORMATS,
+        default="auto",
+        help="v2: opencode session delete; v1: V1 rows and diff files; auto: both that exist",
+    )
+    delete.add_argument("--dry-run", action="store_true", help="print the plan, change nothing")
+    delete.add_argument(
+        "--backup",
+        action="store_true",
+        help="write a verified database backup and zip removed diff files first",
+    )
+    delete.add_argument(
+        "--backup-dir",
+        type=Path,
+        default=Path.home(),
+        help="directory for timestamped backups (default: home directory)",
+    )
+    delete.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     return parser
+
+
+def _session_delete(args, data_dir: Path, console, use_json: bool) -> int:
+    artifacts = storage_env.Artifacts(data_dir)
+    errors = storage_render.Console(stream=sys.stderr)
+    try:
+        plan = storage_session.build_plan(artifacts, args.session_id, args.format)
+    except storage_session.SessionDeleteError as error:
+        errors.error(f"error: {error}")
+        return 1
+    if args.dry_run:
+        if use_json:
+            print(json.dumps({"dry_run": True, "plan": plan}, indent=2, ensure_ascii=False))
+        else:
+            storage_session.render_plan(plan, console)
+            console.section("Dry run")
+            console.write("  " + console.yellow("nothing was modified"))
+        return 0
+
+    if not use_json:
+        storage_session.render_plan(plan, console)
+    if not args.yes:
+        if not sys.stdin.isatty():
+            errors.error("error: no terminal to confirm; pass --yes")
+            return 1
+        answer = input(f"\nDelete {plan['session']['id']}? [y/N] ").strip().lower()
+        if answer != "y":
+            console.write("aborted, nothing changed")
+            return 1
+    try:
+        result = storage_session.execute(artifacts, plan, args.backup, args.backup_dir)
+    except (storage_session.SessionDeleteError, OSError) as error:
+        errors.error(f"error: {error}")
+        return 1
+    if use_json:
+        print(json.dumps({"dry_run": False, "plan": plan, "result": result}, indent=2, ensure_ascii=False))
+    else:
+        storage_session.render_result(plan, result, console)
+    return 0
 
 
 def main(argv=None) -> int:
@@ -158,6 +226,9 @@ def main(argv=None) -> int:
         else:
             storage_cleanup.render_result(result, console)
         return 0
+
+    if args.command == "session" and args.session_command == "delete":
+        return _session_delete(args, data_dir, console, use_json)
 
     return 2
 

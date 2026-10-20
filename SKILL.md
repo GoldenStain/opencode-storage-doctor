@@ -14,15 +14,16 @@ One entry point, standard-library Python only:
 ```bash
 python3 scripts/opencode_storage.py audit   [--top N] [--oversized-mib N]
 python3 scripts/opencode_storage.py cleanup [--clear-events] [--delete-orphan-diffs] [--purge-v1] [--dry-run]
+python3 scripts/opencode_storage.py session delete ID [--format auto|v1|v2] [--dry-run] [--backup] [--yes]
 ```
 
-Shared options on both subcommands:
+Shared options on every subcommand:
 
 - `--data-dir PATH`: override the data directory (defaults to `$XDG_DATA_HOME/opencode`).
 - `--no-color`: disable ANSI color; `NO_COLOR` is honored automatically and color is off when output is not a TTY.
 - `--json`: emit machine-readable JSON instead of the rendered report.
 
-`audit` is read-only. `cleanup` is destructive and refuses to run while OpenCode is active.
+`audit` is read-only. `cleanup` is destructive and refuses to run while OpenCode is active. `session delete` is destructive and asks for confirmation unless `--yes` is given.
 
 Resolve script paths relative to this skill directory. Do not assume copies exist in the user's home directory.
 
@@ -69,7 +70,21 @@ Resolve script paths relative to this skill directory. Do not assume copies exis
 ## Session Cleanup
 
 - Size alone does not prove a session is useless. Ask the user which sessions may be removed.
-- Prefer normal OpenCode session deletion when the whole session is disposable.
+- To delete a whole session, use `session delete`. Always show its dry run first and get approval for that exact session id:
+
+  ```bash
+  python3 scripts/opencode_storage.py session delete ses_1d95e5 --dry-run
+  python3 scripts/opencode_storage.py session delete ses_1d95e5 --yes
+  ```
+
+  - The id may be a unique prefix. An ambiguous prefix lists candidates and changes nothing.
+  - Child sessions are always deleted with their parent, as `opencode session delete` does.
+  - `--format v2` deletes the V2 session through `opencode session delete`. The OpenCode service must be running and must use the default data directory.
+  - `--format v1` deletes the session's V1 rows and its `storage/session_diff` file with SQL. It works while OpenCode runs, because only OpenCode's one-time migration reads those tables.
+  - `--format auto` (default) runs both steps that apply: V2 first, then V1.
+  - The command refuses to delete the session that runs it (`OPENCODE_SESSION_ID`).
+  - When the dry run warns that a session "exists only as V1 data", deleting it loses that conversation for good. Say so to the user.
+  - Deleted rows only free pages. Run `cleanup` afterwards to VACUUM.
 - If one oversized `message.data` row dominates a valuable session, offer a surgical cleanup of `summary.diffs` instead of deleting the session. Back up the database first, preserve the summary object, and replace only its `diffs` array with an empty array.
 - If OpenCode reports `session not found`, verify the session ID directly in the database. Child agent sessions may already have been removed or may be hidden from the normal session list.
 - Re-run the audit after session deletion. Confirm that no orphan message or part rows remain.
