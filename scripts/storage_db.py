@@ -43,6 +43,34 @@ def live_session_ids(connection: sqlite3.Connection) -> set[str]:
     return {row[0] for row in connection.execute(f"SELECT id FROM {session_table}")}
 
 
+class SessionLookupError(LookupError):
+    """No session matches the query, or a prefix matches more than one session."""
+
+
+def session_candidates(connection: sqlite3.Connection) -> list[dict]:
+    """Return every session known to V2 or V1 with its metadata, V2 data first."""
+    sessions: dict[str, dict] = {}
+    for table in ("session_v2", "session"):
+        if not table_exists(connection, table):
+            continue
+        for session_id, parent_id, title, directory, created, updated in connection.execute(
+            "SELECT id, parent_id, title, directory, time_created, time_updated "
+            f"FROM {table}"
+        ):
+            sessions.setdefault(
+                session_id,
+                {
+                    "id": session_id,
+                    "title": (title or "").replace("\n", " ").strip(),
+                    "directory": directory or "",
+                    "parent_id": parent_id or "",
+                    "created": created,
+                    "updated": updated,
+                },
+            )
+    return list(sessions.values())
+
+
 def resolve_session(sessions: list[dict], query: str) -> tuple[dict | None, list[dict]]:
     """Match a session by exact id or unique prefix, returning it plus any ambiguity."""
     exact = [session for session in sessions if session["id"] == query]
@@ -52,6 +80,19 @@ def resolve_session(sessions: list[dict], query: str) -> tuple[dict | None, list
     if len(matches) == 1:
         return matches[0], []
     return None, matches
+
+
+def match_session(sessions: list[dict], query: str) -> dict:
+    """Resolve one session from a candidate list, naming the candidates when it fails."""
+    matched, matches = resolve_session(sessions, query)
+    if matched is not None:
+        return matched
+    if not matches:
+        raise SessionLookupError(f"no session matching {query!r}")
+    listed = "\n".join(
+        f"  {item['id']}  {item['title'] or '(untitled)'}" for item in matches[:10]
+    )
+    raise SessionLookupError(f"prefix {query!r} matches {len(matches)} sessions:\n{listed}")
 
 
 def page_metrics(connection: sqlite3.Connection) -> dict:

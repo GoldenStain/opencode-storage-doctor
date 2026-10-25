@@ -1,6 +1,6 @@
 ---
 name: opencode-storage-doctor
-description: Use when OpenCode storage, opencode.db, tool-output, session_diff, or old sessions consume excessive disk space, or when sessions from non-git directories are missing from `opencode session list` after upgrading OpenCode from V1 to V2; audits usage, identifies the largest sessions, safely prepares cleanup plus offline VACUUM, and moves V1 "global" sessions back into the projects V2 lists them under.
+description: Use when OpenCode storage, opencode.db, tool-output, session_diff, or old sessions consume excessive disk space, when sessions from non-git directories are missing from `opencode session list` after upgrading OpenCode from V1 to V2, or when you need the session tree around one session (its parent and child sessions) by id; audits usage, identifies the largest sessions, safely prepares cleanup plus offline VACUUM, and moves V1 "global" sessions back into the projects V2 lists them under.
 ---
 
 # OpenCode Storage Doctor
@@ -16,6 +16,7 @@ python3 scripts/opencode_storage.py audit   [--top N] [--oversized-mib N]
 python3 scripts/opencode_storage.py cleanup [--clear-events] [--delete-orphan-diffs] [--purge-v1] [--dry-run]
 python3 scripts/opencode_storage.py session delete ID [--format auto|v1|v2] [--dry-run] [--backup] [--yes]
 python3 scripts/opencode_storage.py session adopt-global [--dir DIR]... [--dry-run] [--backup] [--yes]
+python3 scripts/opencode_storage.py session tree ID
 ```
 
 Shared options on every subcommand:
@@ -24,7 +25,7 @@ Shared options on every subcommand:
 - `--no-color`: disable ANSI color; `NO_COLOR` is honored automatically and color is off when output is not a TTY.
 - `--json`: emit machine-readable JSON instead of the rendered report.
 
-`audit` is read-only. `cleanup` and `session adopt-global` change the database and refuse to run while OpenCode is active. `session delete` is destructive. Both `session` commands ask for confirmation unless `--yes` is given.
+`audit` and `session tree` are read-only. `cleanup` and `session adopt-global` change the database and refuse to run while OpenCode is active. `session delete` is destructive. Both destructive `session` commands ask for confirmation unless `--yes` is given.
 
 Resolve script paths relative to this skill directory. Do not assume copies exist in the user's home directory.
 
@@ -70,6 +71,33 @@ Resolve script paths relative to this skill directory. Do not assume copies exis
 
 4. Never print message, part, event, diff, or tool-output contents. Use metadata and byte lengths only.
 
+## Session Tree
+
+`session tree ID` draws the hierarchy around one session: the ancestor chain above it, the session itself, and every session below it. It is read-only and works while OpenCode runs. It reads session metadata only, never message content.
+
+```bash
+python3 scripts/opencode_storage.py session tree ses_1d95e5a37ffe
+```
+
+```
+▍Session tree (6)
+  ses_root  Root session  100 B
+  └─ ses_a  Child A  0 B
+     └─ ses_b  Target session  0 B  ← this session
+        ├─ ses_b2  Child two  0 B
+        │  └─ ses_b2x  Grandchild  0 B
+        └─ ses_b1  Child one  300 B
+```
+
+- Each row shows the session id, its title, and its message bytes. `← this session` marks the session you asked about.
+- Ancestors are drawn root first. Siblings of the queried session are not shown; only the path from the root to the session is.
+- A session with no parent starts the tree at itself. A session with no children ends there.
+- When `parent_id` points at a session the database no longer holds, that row prints `(parent not in the database)` and the walk stops.
+- The id may be a full id or a unique prefix. An ambiguous prefix lists the candidates and exits non-zero.
+- `--json` returns the same data: `sessions`, `ancestors`, `descendants`, `parent_id`, `parent`, `parent_missing`, and a nested `tree` of `{id, current, detail, children}` nodes.
+
+Use it to answer "which session spawned this subagent" and "what did this session spawn". A child session may be missing from `opencode session list` while still existing in the database; the walk follows `parent_id`, so it finds the session anyway.
+
 ## Session Cleanup
 
 - Size alone does not prove a session is useless. Ask the user which sessions may be removed.
@@ -81,7 +109,7 @@ Resolve script paths relative to this skill directory. Do not assume copies exis
   ```
 
   - The id may be a unique prefix. An ambiguous prefix lists candidates and changes nothing.
-  - Child sessions are always deleted with their parent, as `opencode session delete` does.
+  - Child sessions are always deleted with their parent, as `opencode session delete` does. Use `session tree` to see them first.
   - `--format v2` deletes the V2 session through `opencode session delete`. The OpenCode service must be running and must use the default data directory.
   - `--format v1` deletes the session's V1 rows and its `storage/session_diff` file with SQL. It works while OpenCode runs, because only OpenCode's one-time migration reads those tables.
   - `--format auto` (default) runs both steps that apply: V2 first, then V1.

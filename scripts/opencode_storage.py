@@ -16,6 +16,7 @@ import storage_db
 import storage_env
 import storage_render
 import storage_session
+import storage_session_tree
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -152,6 +153,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="directory for timestamped backups (default: home directory)",
     )
     adopt.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+
+    tree = session_commands.add_parser(
+        "tree",
+        parents=[common],
+        help="show the session tree around one session, resolved by full id or unique prefix",
+    )
+    tree.add_argument("session_id", metavar="ID", help="full session id or unique prefix")
     return parser
 
 
@@ -235,6 +243,22 @@ def _session_delete(args, data_dir: Path, console, use_json: bool) -> int:
     return 0
 
 
+def _session_tree(args, data_dir: Path, console, use_json: bool) -> int:
+    """Run the read-only session tree report."""
+    artifacts = storage_env.Artifacts(data_dir)
+    errors = storage_render.Console(stream=sys.stderr)
+    try:
+        report = storage_session_tree.build_tree(artifacts, args.session_id)
+    except storage_session_tree.SessionTreeError as error:
+        errors.error(f"error: {error}")
+        return 1
+    if use_json:
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+    else:
+        storage_session_tree.render_tree(report, console)
+    return 0
+
+
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     data_dir = storage_env.resolve_data_dir(getattr(args, "data_dir", None))
@@ -297,6 +321,8 @@ def main(argv=None) -> int:
         return _session_delete(args, data_dir, console, use_json)
     if args.command == "session" and args.session_command == "adopt-global":
         return _session_adopt(args, data_dir, console, use_json)
+    if args.command == "session" and args.session_command == "tree":
+        return _session_tree(args, data_dir, console, use_json)
 
     return 2
 

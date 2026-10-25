@@ -39,6 +39,7 @@ python3 scripts/opencode_storage.py audit   [--top N] [--oversized-mib N]
 python3 scripts/opencode_storage.py cleanup [--clear-events] [--delete-orphan-diffs] [--purge-v1] [--dry-run]
 python3 scripts/opencode_storage.py session delete ID [--format auto|v1|v2] [--dry-run] [--backup] [--yes]
 python3 scripts/opencode_storage.py session adopt-global [--dir DIR]... [--dry-run] [--backup] [--yes]
+python3 scripts/opencode_storage.py session tree ID
 ```
 
 Shared options: `--data-dir PATH`, `--json`, `--no-color`.
@@ -61,6 +62,32 @@ Reports:
 
 On V2 databases, sessions and messages come from `session_v2` and `session_message`.
 
+#### session tree (read-only)
+
+Draws the hierarchy around one session: the ancestor chain above it, the session itself, and every session below it. It accepts a full id or a unique prefix and works while OpenCode runs.
+
+```bash
+python3 scripts/opencode_storage.py session tree ses_1d95e5a37ffe
+```
+
+```
+▍Session tree (6)
+  ses_root  Root session  100 B
+  └─ ses_a  Child A  0 B
+     └─ ses_b  Target session  0 B  ← this session
+        ├─ ses_b2  Child two  0 B
+        │  └─ ses_b2x  Grandchild  0 B
+        └─ ses_b1  Child one  300 B
+```
+
+- Each row shows the session id, its title, and its message bytes. `← this session` marks the session you asked about.
+- Ancestors are drawn root first. Only the path to the queried session is shown, not its siblings.
+- A session with no parent starts the tree at itself; a session with no children ends there.
+- When `parent_id` points at a session the database no longer holds, that row prints `(parent not in the database)` and the walk stops.
+- A prefix that matches several sessions lists the candidates and exits non-zero.
+- Nothing is modified and no confirmation is asked.
+- `--json` returns `sessions`, `ancestors`, `descendants`, `parent_id`, `parent`, `parent_missing`, and a nested `tree` of `{id, current, detail, children}` nodes.
+
 #### cleanup (destructive)
 
 - Refuses to run while any `opencode` process is alive (VACUUM requires exclusive database access) and names the offending PIDs.
@@ -82,7 +109,7 @@ python3 scripts/opencode_storage.py cleanup --clear-events --delete-orphan-diffs
 
 #### session delete (destructive)
 
-Deletes one session and its child sessions, chosen by full id or unique prefix. Asks for confirmation unless `--yes` is given; `--dry-run` only prints the plan.
+Deletes one session and its child sessions, chosen by full id or unique prefix. Asks for confirmation unless `--yes` is given; `--dry-run` only prints the plan. Run `session tree ID` first to see which sessions go with it.
 
 - `--format v2`: delete the V2 session through `opencode session delete` (needs the OpenCode service, default data directory only).
 - `--format v1`: delete the session's V1 rows and `storage/session_diff` file. Works while OpenCode runs.
@@ -157,6 +184,7 @@ python3 scripts/opencode_storage.py audit   [--top N] [--oversized-mib N]
 python3 scripts/opencode_storage.py cleanup [--clear-events] [--delete-orphan-diffs] [--purge-v1] [--dry-run]
 python3 scripts/opencode_storage.py session delete ID [--format auto|v1|v2] [--dry-run] [--backup] [--yes]
 python3 scripts/opencode_storage.py session adopt-global [--dir DIR]... [--dry-run] [--backup] [--yes]
+python3 scripts/opencode_storage.py session tree ID
 ```
 
 通用选项：`--data-dir PATH`、`--json`、`--no-color`。
@@ -179,6 +207,32 @@ python3 scripts/opencode_storage.py session adopt-global [--dir DIR]... [--dry-r
 
 在 V2 数据库上，会话与消息统计读取 `session_v2` 与 `session_message`。
 
+#### session tree（只读）
+
+以树状图显示一个会话周围的关系：它上方的祖先链、它自己，以及它下方的所有会话。接受完整 id 或唯一前缀，OpenCode 运行时也可执行。
+
+```bash
+python3 scripts/opencode_storage.py session tree ses_1d95e5a37ffe
+```
+
+```
+▍Session tree (6)
+  ses_root  Root session  100 B
+  └─ ses_a  Child A  0 B
+     └─ ses_b  Target session  0 B  ← this session
+        ├─ ses_b2  Child two  0 B
+        │  └─ ses_b2x  Grandchild  0 B
+        └─ ses_b1  Child one  300 B
+```
+
+- 每行显示会话 id、标题和消息字节数。`← this session` 标记你查询的会话。
+- 祖先从根开始绘制。只显示通往被查询会话的那条路径，不显示它的兄弟会话。
+- 没有父会话的会话从它自己开始；没有子会话的会话到此结束。
+- 如果 `parent_id` 指向的会话已不在数据库中，该行显示 `(parent not in the database)`，遍历就此停止。
+- 前缀匹配到多个会话时，列出候选并返回非零退出码。
+- 不修改任何数据，也不会要求确认。
+- `--json` 返回 `sessions`、`ancestors`、`descendants`、`parent_id`、`parent`、`parent_missing`，以及嵌套的 `tree`（每个节点为 `{id, current, detail, children}`）。
+
 #### cleanup（破坏性）
 
 - OpenCode 进程存活时**拒绝运行**（VACUUM 需要独占数据库访问），并列出占用进程的 PID。
@@ -200,7 +254,7 @@ python3 scripts/opencode_storage.py cleanup --clear-events --delete-orphan-diffs
 
 #### session delete（破坏性）
 
-按完整 id 或唯一前缀删除一个会话及其子会话。不加 `--yes` 时会要求确认；`--dry-run` 只打印计划。
+按完整 id 或唯一前缀删除一个会话及其子会话。不加 `--yes` 时会要求确认；`--dry-run` 只打印计划。可先用 `session tree ID` 查看会一并删除哪些会话。
 
 - `--format v2`：通过 `opencode session delete` 删除 V2 会话（需要 OpenCode 服务在运行，且只支持默认数据目录）。
 - `--format v1`：删除该会话的 V1 行与 `storage/session_diff` 文件。OpenCode 运行时也可执行。

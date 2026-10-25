@@ -16,12 +16,6 @@ import storage_v1
 MESSAGE_DETAIL_LIMIT = 50
 
 
-def _format_date(milliseconds) -> str:
-    if not milliseconds:
-        return "unknown"
-    return datetime.datetime.fromtimestamp(milliseconds / 1000).strftime("%Y-%m-%d")
-
-
 def _amount(count: int, size: int) -> str:
     """Render a row count and its byte size as one compact cell."""
     return f"{render.human_count(count)} · {render.human_bytes(size)}"
@@ -57,7 +51,7 @@ def _session_detail(connection: sqlite3.Connection, session: dict) -> dict:
             "id": message_id,
             "bytes": size or 0,
             "parts": parts,
-            "created": _format_date(message_created),
+            "created": render.format_date(message_created),
         }
         for message_id, size, message_created, parts in connection.execute(
             f"SELECT m.id, LENGTH(m.data), m.time_created, {part_count} "
@@ -73,9 +67,9 @@ def _session_detail(connection: sqlite3.Connection, session: dict) -> dict:
         "directory": directory or "",
         "project_id": project_id or "",
         "parent_id": parent_id or "",
-        "created": _format_date(created),
-        "updated": _format_date(updated),
-        "archived": _format_date(archived) if archived else "",
+        "created": render.format_date(created),
+        "updated": render.format_date(updated),
+        "archived": render.format_date(archived) if archived else "",
         "message_count": session["message_count"],
         "message_bytes": session["message_bytes"],
         "part_count": session["part_count"],
@@ -181,7 +175,7 @@ def _session_report(connection: sqlite3.Connection, artifacts: storage_env.Artif
                 "id": session_id,
                 "title": (title or "").replace("\n", " ").strip(),
                 "directory": directory or "",
-                "updated": _format_date(updated),
+                "updated": render.format_date(updated),
                 "message_count": message_count,
                 "message_bytes": message_bytes,
                 "part_count": part_count,

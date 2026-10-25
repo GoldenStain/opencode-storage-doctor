@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import os
 import sys
 import unicodedata
@@ -118,6 +119,13 @@ def pad(text: str, columns: int, align: str = "left") -> str:
         left = gap // 2
         return " " * left + text + " " * (gap - left)
     return text + " " * gap
+
+
+def format_date(milliseconds) -> str:
+    """Format a millisecond timestamp as YYYY-MM-DD, or 'unknown' when it is unset."""
+    if not milliseconds:
+        return "unknown"
+    return datetime.datetime.fromtimestamp(milliseconds / 1000).strftime("%Y-%m-%d")
 
 
 def human_bytes(value: float) -> str:

@@ -24,22 +24,6 @@ class SessionDeleteError(Exception):
     """The session could not be resolved, or a deletion step failed or was refused."""
 
 
-def _candidates(connection: sqlite3.Connection) -> list[dict]:
-    """Return every session id known to V2 or V1, with its title, V2 data first."""
-    sessions: dict[str, dict] = {}
-    for table in ("session_v2", "session"):
-        if not storage_db.table_exists(connection, table):
-            continue
-        for session_id, title, directory in connection.execute(
-            f"SELECT id, title, directory FROM {table}"
-        ):
-            sessions.setdefault(
-                session_id,
-                {"id": session_id, "title": (title or "").replace("\n", " ").strip(), "directory": directory or ""},
-            )
-    return list(sessions.values())
-
-
 def _subtree(connection: sqlite3.Connection, root: str) -> list[str]:
     """Return the root id and all descendant ids, following parent_id in V2 and V1."""
     edges = " UNION ".join(
@@ -70,12 +54,12 @@ def build_plan(artifacts: storage_env.Artifacts, query: str, fmt: str) -> dict:
     try:
         if not storage_db.is_v2_layout(connection):
             raise SessionDeleteError("session delete supports OpenCode V2 databases only")
-        matched, matches = storage_db.resolve_session(_candidates(connection), query)
-        if matched is None:
-            if not matches:
-                raise SessionDeleteError(f"no session matching {query!r}")
-            listed = "\n".join(f"  {item['id']}  {item['title'] or '(untitled)'}" for item in matches[:10])
-            raise SessionDeleteError(f"prefix {query!r} matches {len(matches)} sessions:\n{listed}")
+        try:
+            matched = storage_db.match_session(
+                storage_db.session_candidates(connection), query
+            )
+        except storage_db.SessionLookupError as error:
+            raise SessionDeleteError(str(error)) from error
 
         ids = _subtree(connection, matched["id"])
         parameter = (json.dumps(ids),)

@@ -36,6 +36,7 @@ from `SKILL.md`'s `name`. Keep both equal to the repository name,
 - `scripts/storage_env.py`: locates the data directory and detects running OpenCode processes.
 - `scripts/storage_render.py`: renders reports as aligned terminal text.
 - `scripts/storage_session.py`: deletes one session tree chosen by id or prefix.
+- `scripts/storage_session_tree.py`: reports the session hierarchy around one session.
 - `scripts/storage_v1.py`: clears leftover V1 conversation data out of a V2 database.
 
 Two entries need an "and" (`storage_audit.py`, `storage_env.py`). Both are
@@ -56,7 +57,8 @@ L0 (read line by line):
    `archive_and_remove()`, which deletes files after the zip verifies.
 5. `scripts/storage_db.py`: `is_v2_layout()`, `session_tables()`,
    `live_session_ids()` (they decide which sessions are live, so which diffs are
-   orphans), and `resolve_session()` (prefix matching picks the session to delete).
+   orphans), `resolve_session()`, `match_session()`, `session_candidates()` (prefix
+   matching picks the session these commands report or delete).
 6. `scripts/storage_env.py`: `running_processes()` (the gate before VACUUM) and
    `resolve_data_dir()`.
 7. `scripts/opencode_storage.py`: flag names and defaults (`--backup` off,
@@ -66,6 +68,9 @@ L0 (read line by line):
 9. `scripts/storage_adopt.py`: `project_id()`, `unavailable_reason()` (the id-rule
    check), the skip rules in `_skip_reason()` and `build_plan()`, `apply()`, and the
    process gate in `execute()`. Not the `render_*` functions or `summary()` (L2).
+10. `scripts/storage_session_tree.py`: `_load()`, `_ancestors()`, `_children_map()`,
+   `_descendants()`, `_message_stats()` (a cycle or a wrong precedence rule silently
+   prints the wrong tree). Not the `render_*` functions (L2).
 
 L1: `scripts/storage_audit.py` (report contents), the estimates in `storage_v1.py`.
 L2: `scripts/storage_render.py`, the `render_*` functions, `README.md`.
@@ -78,7 +83,8 @@ L2: `scripts/storage_render.py`, the `render_*` functions, `README.md`.
 2. **Command modules mix deletion logic with rendering.** `storage_cleanup.py`,
    `storage_session.py`, and `storage_adopt.py` hold L0 logic and L2 `render_*`
    functions in one file; `storage_audit.py` (about 530 logic lines) both builds
-   and renders. Move rendering out so L0 files hold only L0 code.
+   and renders; `storage_session_tree.py` holds the relationship walk and its
+   rendering. Move rendering out so L0 files hold only L0 code.
 3. **`storage_env.py` holds two concepts.** Path resolution and process
    detection change for different reasons.
 4. **Process detection matches by name.** `running_processes()` looks for
