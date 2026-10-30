@@ -127,15 +127,19 @@ def build_plan(artifacts: storage_env.Artifacts, query: str, fmt: str) -> dict:
 
 def _same_store(artifacts: storage_env.Artifacts) -> bool:
     default = storage_env.Artifacts(storage_env.resolve_data_dir(None))
-    return artifacts.db_path.resolve() == default.db_path.resolve()
+    return storage_env.same_path(artifacts.db_path.resolve(), default.db_path.resolve())
 
 
 def _opencode(arguments: list[str]) -> subprocess.CompletedProcess:
     executable = shutil.which("opencode")
     if not executable:
         raise SessionDeleteError("opencode is not on PATH; V2 deletion needs the OpenCode CLI")
+    command = [executable, *arguments]
+    if os.name == "nt" and executable.lower().endswith((".cmd", ".bat")):
+        # CreateProcess cannot start a batch file directly; npm installs a .cmd shim.
+        command = [os.environ.get("COMSPEC", "cmd.exe"), "/c", *command]
     return subprocess.run(
-        [executable, *arguments],
+        command,
         capture_output=True,
         text=True,
         stdin=subprocess.DEVNULL,
