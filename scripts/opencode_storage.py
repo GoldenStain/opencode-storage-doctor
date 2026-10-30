@@ -272,7 +272,19 @@ def _session_tree(args, data_dir: Path, console, use_json: bool) -> int:
     return 0
 
 
+def _harden_stdout() -> None:
+    """Stop a non-UTF-8 console from raising on CJK titles and report glyphs."""
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if reconfigure is None:
+        return
+    try:
+        reconfigure(errors="backslashreplace")
+    except (ValueError, OSError):
+        pass
+
+
 def main(argv=None) -> int:
+    _harden_stdout()
     args = build_parser().parse_args(argv)
     data_dir = storage_env.resolve_data_dir(getattr(args, "data_dir", None))
     use_json = getattr(args, "json", False)

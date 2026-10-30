@@ -22,6 +22,36 @@ CODES = {
 }
 WIDE_CATEGORIES = ("W", "F")
 UNITS = ("B", "KiB", "MiB", "GiB", "TiB")
+ASCII_GLYPHS = str.maketrans(
+    {
+        "✓": "ok",
+        "✗": "x",
+        "·": "-",
+        "▍": "|",
+        "█": "#",
+        "░": "-",
+        "┌": "+",
+        "┐": "+",
+        "└": "+",
+        "┘": "+",
+        "│": "|",
+        "─": "-",
+        "├": "+",
+        "→": "->",
+        "←": "<-",
+        "…": "...",
+    }
+)
+
+
+def supports_unicode(stream) -> bool:
+    """Return False when the stream's encoding cannot represent the report glyphs."""
+    encoding = getattr(stream, "encoding", None) or "ascii"
+    try:
+        "✓·▍█░┌┐└┘│─├→←…".encode(encoding)
+    except (LookupError, UnicodeEncodeError):
+        return False
+    return True
 
 
 def color_enabled(stream) -> bool:
@@ -36,11 +66,19 @@ def color_enabled(stream) -> bool:
 
 
 class Console:
-    """Write styled lines to a stream, disabling color when it is not wanted."""
+    """Write styled lines to a stream, disabling color and glyphs it cannot show."""
 
     def __init__(self, stream=None, color: bool | None = None):
         self.stream = stream if stream is not None else sys.stdout
         self.color = color_enabled(self.stream) if color is None else bool(color)
+        self.unicode = supports_unicode(self.stream)
+
+    def _emit(self, text: str) -> None:
+        try:
+            self.stream.write(text)
+        except UnicodeEncodeError:
+            encoding = getattr(self.stream, "encoding", None) or "ascii"
+            self.stream.write(text.encode(encoding, "replace").decode(encoding, "replace"))
 
     def _styled(self, name: str, text: str) -> str:
         if not self.color or not text:
@@ -69,7 +107,9 @@ class Console:
         return self._styled("magenta", text)
 
     def write(self, text: str = "") -> None:
-        self.stream.write(f"{text}\n")
+        if not self.unicode:
+            text = text.translate(ASCII_GLYPHS)
+        self._emit(f"{text}\n")
 
     def line(self, label: str, value: str, width: int = 14) -> None:
         self.write(f"  {pad(label, width)}{value}")
@@ -82,7 +122,9 @@ class Console:
         self.write(self.yellow(text))
 
     def error(self, text: str) -> None:
-        self.stream.write(self.red(text) + "\n")
+        if not self.unicode:
+            text = text.translate(ASCII_GLYPHS)
+        self._emit(self.red(text) + "\n")
 
 
 def display_width(text: str) -> int:
