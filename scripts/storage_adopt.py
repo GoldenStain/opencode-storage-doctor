@@ -12,6 +12,7 @@ from pathlib import Path
 import storage_backup
 import storage_db
 import storage_env
+import storage_processes
 import storage_render as render
 
 
@@ -189,17 +190,41 @@ def apply(connection: sqlite3.Connection, plan: dict) -> dict:
     return moved
 
 
-def execute(artifacts: storage_env.Artifacts, plan: dict, to_backup: bool, backup_dir: Path) -> dict:
+def execute(
+    artifacts: storage_env.Artifacts,
+    plan: dict,
+    to_backup: bool,
+    backup_dir: Path,
+    no_process_check: bool = False,
+) -> dict:
     """Refuse while OpenCode runs, optionally back up, then apply the plan."""
     if plan["reason"]:
         raise AdoptError(plan["reason"])
-    processes = storage_env.running_processes()
-    if processes:
-        detail = "\n".join(f"  PID {entry['pid']}: {entry['command']}" for entry in processes)
+    state = storage_processes.detect()
+    use = storage_processes.file_in_use(artifacts.db_path)
+    if state.processes:
+        detail = "\n".join(f"  PID {entry['pid']}: {entry['command']}" for entry in state.processes)
         raise AdoptError(
             "OpenCode is running; it keeps session locations in memory.\n"
             f"{detail}\nStop every OpenCode process (for example `opencode service stop`), then run this again."
         )
+    if use.in_use:
+        raise AdoptError(
+            f"the database is open in another process ({use.detail}); it keeps session "
+            "locations in memory.\nStop every OpenCode process, then run this again."
+        )
+    if not state.checked or not use.checked:
+        reasons = [
+            detail
+            for detail, checked in ((state.detail, state.checked), (use.detail, use.checked))
+            if not checked
+        ]
+        if not no_process_check:
+            raise AdoptError(
+                "cannot confirm that OpenCode is stopped: "
+                + "; ".join(reasons)
+                + ".\nStop it by hand, then pass --no-process-check."
+            )
     result = {"backup_path": None, "moved": {}}
     if to_backup:
         backup_dir = Path(backup_dir).expanduser()

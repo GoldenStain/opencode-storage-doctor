@@ -8,6 +8,7 @@ from pathlib import Path
 import storage_backup
 import storage_db
 import storage_env
+import storage_processes
 import storage_render as render
 import storage_v1
 
@@ -107,27 +108,50 @@ def run(
     dry_run: bool = False,
     to_backup: bool = False,
     purge_v1: bool = False,
+    no_process_check: bool = False,
 ) -> dict:
     """Back up the database, optionally clean it, and VACUUM it back to the filesystem."""
-    processes = storage_env.running_processes()
+    state = storage_processes.detect()
     plan = build_plan(artifacts, clear_events, delete_orphan_diffs, purge_v1)
+    use = storage_processes.file_in_use(artifacts.db_path)
+    file_use = {"in_use": use.in_use, "checked": use.checked, "detail": use.detail}
     if dry_run:
         return {
             "dry_run": True,
             "plan": plan,
-            "processes": processes,
+            "processes": state.processes,
+            "process_check": {"checked": state.checked, "detail": state.detail},
+            "file_use": file_use,
             "backup": bool(to_backup),
             "backup_dir": str(Path(backup_dir).expanduser()),
         }
 
-    if processes:
+    if state.processes:
         detail = "\n".join(
-            f"  PID {entry['pid']}: {entry['command']}" for entry in processes
+            f"  PID {entry['pid']}: {entry['command']}" for entry in state.processes
         )
         raise CleanupError(
             "OpenCode is running; VACUUM requires exclusive access.\n"
             f"{detail}\nExit every OpenCode serve/attach process, then run this command again."
         )
+    if use.in_use:
+        raise CleanupError(
+            f"the database is open in another process ({use.detail}); VACUUM requires "
+            "exclusive access.\nExit every OpenCode serve/attach process, then run this "
+            "command again."
+        )
+    if not state.checked or not use.checked:
+        reasons = [
+            detail
+            for detail, checked in ((state.detail, state.checked), (use.detail, use.checked))
+            if not checked
+        ]
+        if not no_process_check:
+            raise CleanupError(
+                "cannot confirm that OpenCode is stopped: "
+                + "; ".join(reasons)
+                + ".\nStop it by hand, then pass --no-process-check to continue."
+            )
     if not artifacts.db_path.is_file():
         raise CleanupError(f"database not found: {artifacts.db_path}")
     backup_dir = Path(backup_dir).expanduser()
@@ -224,6 +248,8 @@ def run(
 
     return {
         "dry_run": False,
+        "process_check": {"checked": state.checked, "detail": state.detail},
+        "file_use": file_use,
         "before_bytes": before,
         "after_bytes": after,
         "wal_bytes": wal_after,
@@ -240,17 +266,35 @@ def run(
 
 def render_plan(
     plan: dict,
-    processes: list[dict[str, str]],
+    state: storage_processes.ProcessState,
+    use: storage_processes.FileUse,
     backup_dir: str,
     console: render.Console,
     backup: bool = False,
 ) -> None:
     console.section("Preflight")
-    if processes:
+    if state.processes:
         console.write(
             "  "
-            + console.yellow(f"! {len(processes)} OpenCode process(es) running")
+            + console.yellow(f"! {len(state.processes)} OpenCode process(es) running")
             + console.dim("  (fine for a dry run; blocks a real VACUUM)")
+        )
+    elif use.in_use:
+        console.write(
+            "  "
+            + console.yellow("! the database is open in another process")
+            + console.dim(f"  ({use.detail})")
+        )
+    elif not state.checked or not use.checked:
+        detail = "; ".join(
+            item
+            for item, checked in ((state.detail, state.checked), (use.detail, use.checked))
+            if not checked
+        )
+        console.write(
+            "  "
+            + console.yellow("! cannot check for OpenCode processes")
+            + console.dim(f"  ({detail})")
         )
     else:
         console.write("  " + console.green("✓") + " no OpenCode processes running")
@@ -325,7 +369,16 @@ def render_plan(
 
 def render_result(result: dict, console: render.Console) -> None:
     console.section("Preflight")
-    console.write("  " + console.green("✓") + " no OpenCode processes running")
+    check = result.get("process_check") or {"checked": True}
+    use = result.get("file_use") or {"checked": True}
+    if check["checked"] and use["checked"]:
+        console.write("  " + console.green("✓") + " no OpenCode processes running")
+    else:
+        console.write(
+            "  "
+            + console.yellow("! process check skipped")
+            + console.dim("  (--no-process-check)")
+        )
 
     console.section("Backup")
     if result["backup_path"]:

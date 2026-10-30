@@ -14,6 +14,7 @@ import storage_audit
 import storage_cleanup
 import storage_db
 import storage_env
+import storage_processes
 import storage_render
 import storage_session
 import storage_session_tree
@@ -103,6 +104,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="write a verified database backup and zip removed diff files (default: no backup)",
     )
+    cleanup.add_argument(
+        "--no-process-check",
+        action="store_true",
+        help="continue when OpenCode processes cannot be listed (stop them by hand first)",
+    )
 
     session = subparsers.add_parser("session", parents=[common], help="act on sessions")
     session_commands = session.add_subparsers(dest="session_command", required=True)
@@ -153,6 +159,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="directory for timestamped backups (default: home directory)",
     )
     adopt.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+    adopt.add_argument(
+        "--no-process-check",
+        action="store_true",
+        help="continue when OpenCode processes cannot be listed (stop them by hand first)",
+    )
 
     tree = session_commands.add_parser(
         "tree",
@@ -198,7 +209,9 @@ def _session_adopt(args, data_dir: Path, console, use_json: bool) -> int:
         console.write("aborted, nothing changed")
         return 1
     try:
-        result = storage_adopt.execute(artifacts, plan, args.backup, args.backup_dir)
+        result = storage_adopt.execute(
+            artifacts, plan, args.backup, args.backup_dir, no_process_check=args.no_process_check
+        )
     except (storage_adopt.AdoptError, sqlite3.Error, OSError) as error:
         errors.error(f"error: {error}")
         return 1
@@ -299,6 +312,7 @@ def main(argv=None) -> int:
                 dry_run=args.dry_run,
                 to_backup=args.backup,
                 purge_v1=args.purge_v1,
+                no_process_check=args.no_process_check,
             )
         except storage_cleanup.CleanupError as error:
             storage_render.Console(stream=sys.stderr).error(f"error: {error}")
@@ -306,9 +320,16 @@ def main(argv=None) -> int:
         if use_json:
             print(json.dumps(result, indent=2, ensure_ascii=False))
         elif result["dry_run"]:
+            state = storage_processes.ProcessState(
+                checked=result["process_check"]["checked"],
+                processes=result["processes"],
+                detail=result["process_check"]["detail"],
+            )
+            use = storage_processes.FileUse(**result["file_use"])
             storage_cleanup.render_plan(
                 result["plan"],
-                result["processes"],
+                state,
+                use,
                 result["backup_dir"],
                 console,
                 backup=result["backup"],

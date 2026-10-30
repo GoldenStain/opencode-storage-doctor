@@ -1,4 +1,4 @@
-"""Locate OpenCode's data directory and artifacts, compare paths across platforms, and detect running OpenCode processes."""
+"""Locate OpenCode's data directory and artifacts, and compare paths across platforms."""
 
 from __future__ import annotations
 
@@ -69,31 +69,6 @@ def resolve_data_dir(override: Path | str | None = None) -> Path:
     if os.environ.get("XDG_DATA_HOME"):
         return Path(os.environ["XDG_DATA_HOME"]).expanduser() / "opencode"
     return Path.home() / ".local/share/opencode"
-
-
-def running_processes() -> list[dict[str, str]]:
-    """Return live processes named opencode as pid/command pairs."""
-    processes: list[dict[str, str]] = []
-    proc = Path("/proc")
-    if not proc.is_dir():
-        return processes
-    for entry in proc.iterdir():
-        if not entry.name.isdigit():
-            continue
-        try:
-            if (entry / "comm").read_text().strip() != "opencode":
-                continue
-            cmdline = (
-                (entry / "cmdline")
-                .read_bytes()
-                .replace(b"\0", b" ")
-                .decode(errors="replace")
-                .strip()
-            )
-        except (FileNotFoundError, PermissionError, ProcessLookupError, OSError):
-            continue
-        processes.append({"pid": entry.name, "command": cmdline or "opencode"})
-    return processes
 
 
 def looks_windows(path: str | Path) -> bool:
