@@ -15,7 +15,9 @@ The audit is **read-only** and never prints conversation content. Cleanup is des
 ### Requirements
 
 - Python 3.8+ (standard library only — no third-party packages)
-- Linux or WSL (running-process detection reads `/proc`; on other platforms stop OpenCode manually before cleanup)
+- Linux: process detection reads `/proc`.
+- Windows: process detection runs `tasklist`, and the database file is probed with an exclusive open, which fails while any process holds it. Paths stored by OpenCode as `C:/Users/...` are compared and hashed in their native form.
+- macOS and other platforms: no process detector exists. `cleanup` and `session adopt-global` refuse to run there unless you pass `--no-process-check` after stopping OpenCode yourself.
 
 ### Install
 
@@ -42,9 +44,9 @@ python3 scripts/opencode_storage.py session adopt-global [--dir DIR]... [--dry-r
 python3 scripts/opencode_storage.py session tree ID
 ```
 
-Shared options: `--data-dir PATH`, `--json`, `--no-color`.
+Shared options: `--data-dir PATH`, `--json`, `--no-color`, and `--no-process-check` on the two destructive commands.
 
-Data directory resolution: `--data-dir` → `$OPENCODE_DATA_DIR` → `$XDG_DATA_HOME/opencode` → `~/.local/share/opencode`.
+Data directory resolution: `--data-dir` → `$OPENCODE_DATA_DIR` → `$XDG_DATA_HOME/opencode` → `~/.local/share/opencode`. The last rule is the same on Windows, where it means `%USERPROFILE%\.local\share\opencode`; OpenCode has no platform branch. The database file is `opencode.db`, or the file named by `$OPENCODE_DB`, or a single `opencode-<channel>.db` in the data directory.
 
 #### audit (read-only)
 
@@ -90,7 +92,9 @@ python3 scripts/opencode_storage.py session tree ses_1d95e5a37ffe
 
 #### cleanup (destructive)
 
-- Refuses to run while any `opencode` process is alive (VACUUM requires exclusive database access) and names the offending PIDs.
+- Refuses to run while any `opencode` process is alive (VACUUM requires exclusive database access) and names the offending PIDs. On Windows it also treats `OpenChamber.exe` and `opencode-desktop.exe` as OpenCode processes.
+- Refuses to run when any process holds `opencode.db` open, even one whose name is not on the list. Windows reports this by an exclusive open; Linux reads `/proc/<pid>/fd`. This is what catches a renamed binary, a `bun`/`node` dev launch, or another tool holding the database.
+- Refuses to run when it cannot check at all (macOS, a failed `tasklist`, or an unreadable handle table), because "could not check" is not "stopped". Pass `--no-process-check` after stopping OpenCode by hand to bypass only that refusal. It never bypasses a process or an open file that was actually found.
 - With `--backup`: creates and integrity-checks a timestamped backup (`opencode.db.pre-cleanup-<timestamp>.bak`) before touching anything, and zips removed diff files. Without it, no backup is written.
 - `--clear-events`: delete `event` rows, plus `event_sequence` on V1 databases only (V2 numbers new session messages from `event_sequence`, so it is kept there).
 - `--delete-orphan-diffs`: archive, then remove `session_diff` files with no corresponding live session.
@@ -132,6 +136,7 @@ python3 scripts/opencode_storage.py session adopt-global --backup
 ```
 
 - Skips directories that no longer exist, symlinked paths, and directories inside a git or hg tree (OpenCode adopts those itself).
+- The project id is the SHA-1 of the native path, so `C:/Users/you/proj` is hashed as `C:\Users\you\proj`, the form OpenCode wrote. Both separator forms are accepted when matching existing projects.
 - `--dir DIR` (repeatable) limits the move to some directories.
 - Refuses while OpenCode runs, on non-V2 databases, and when the database's own directory projects do not match the known id rule (an unsupported OpenCode version). If no directory project exists yet, open OpenCode once in any non-git directory and retry.
 - The audit reports how many sessions are affected.
@@ -143,6 +148,8 @@ The audit never reads or prints message, part, event, diff, or tool-output conte
 ### Notes
 
 - Logical deletion is not physical shrink: SQLite `DELETE` only returns pages to the freelist; only `VACUUM` gives that space back to the filesystem. Reclaimable space = `freelist + event rows + V1 residue rows`.
+- Windows opens a database file exclusively enough that a running OpenCode blocks `VACUUM`. Stop it first; the preflight checks do that for you. If a diff file cannot be deleted because another process holds it, the command names the file, keeps the archive, and reports how many files were removed.
+- The checks run just before `VACUUM`, not during it. A process that starts in that gap makes SQLite refuse with `database is locked`; it does not corrupt the file. Re-run after stopping that process.
 - Keep the backup for a day or two; delete it once `integrity_check` is `ok`, OpenCode starts normally, retained sessions open, and you no longer need the deleted history.
 
 ### License
@@ -160,7 +167,9 @@ MIT — see [LICENSE](LICENSE).
 ### 环境要求
 
 - Python 3.8+（仅标准库，无第三方依赖）
-- Linux 或 WSL（进程检测读取 `/proc`；其他平台请在清理前手动退出 OpenCode）
+- Linux：进程检测读取 `/proc`。
+- Windows：进程检测调用 `tasklist`，另外对数据库文件做独占打开探测：只要任何进程持有该文件，探测就会失败。OpenCode 存成 `C:/Users/...` 的路径，按原生形式比较和哈希。
+- macOS 及其他平台：没有进程检测后端。`cleanup` 与 `session adopt-global` 会拒绝运行，除非你先手动退出 OpenCode 再加 `--no-process-check`。
 
 ### 安装
 
@@ -187,9 +196,9 @@ python3 scripts/opencode_storage.py session adopt-global [--dir DIR]... [--dry-r
 python3 scripts/opencode_storage.py session tree ID
 ```
 
-通用选项：`--data-dir PATH`、`--json`、`--no-color`。
+通用选项：`--data-dir PATH`、`--json`、`--no-color`；两个破坏性命令另有 `--no-process-check`。
 
-数据目录解析顺序：`--data-dir` → `$OPENCODE_DATA_DIR` → `$XDG_DATA_HOME/opencode` → `~/.local/share/opencode`。
+数据目录解析顺序：`--data-dir` → `$OPENCODE_DATA_DIR` → `$XDG_DATA_HOME/opencode` → `~/.local/share/opencode`。最后一条在 Windows 上同样是 `%USERPROFILE%\.local\share\opencode`，OpenCode 没有平台分支。数据库文件是 `opencode.db`，或 `$OPENCODE_DB` 指定的文件，或数据目录下唯一的 `opencode-<channel>.db`。
 
 #### audit（只读）
 
@@ -235,7 +244,9 @@ python3 scripts/opencode_storage.py session tree ses_1d95e5a37ffe
 
 #### cleanup（破坏性）
 
-- OpenCode 进程存活时**拒绝运行**（VACUUM 需要独占数据库访问），并列出占用进程的 PID。
+- OpenCode 进程存活时**拒绝运行**（VACUUM 需要独占数据库访问），并列出占用进程的 PID。在 Windows 上，`OpenChamber.exe` 与 `opencode-desktop.exe` 同样算作 OpenCode 进程。
+- 任何进程持有 `opencode.db` 时也会**拒绝运行**，即使它的名字不在名单里。Windows 用独占打开探测，Linux 读 `/proc/<pid>/fd`。这条能抓住改名后的二进制、`bun`/`node` 启动的开发版本，以及其他占用数据库的工具。
+- 完全无法检查时（macOS、`tasklist` 失败、句柄表不可读）也拒绝运行，因为“没法检查”不等于“已经停止”。手动退出 OpenCode 后可加 `--no-process-check` 跳过这道拒绝；它**不会**绕过真实检测到的进程或已被占用的文件。
 - 加 `--backup` 时：改动前先创建带时间戳的备份（`opencode.db.pre-cleanup-<时间戳>.bak`）并做完整性校验，被删的 diff 文件打包成 zip。不加则不写任何备份。
 - `--clear-events`：删除 `event` 行；仅在 V1 数据库上同时删除 `event_sequence`（V2 用 `event_sequence` 给新消息编号，所以保留）。
 - `--delete-orphan-diffs`：先归档，再删除没有对应存活会话的 `session_diff` 文件。
@@ -277,6 +288,7 @@ python3 scripts/opencode_storage.py session adopt-global --backup
 ```
 
 - 跳过已不存在的目录、带符号链接的路径，以及位于 git 或 hg 仓库内的目录（OpenCode 会自行处理这些）。
+- 项目 id 是原生路径的 SHA-1，所以 `C:/Users/you/proj` 按 `C:\Users\you\proj` 计算，与 OpenCode 写入的形式一致。匹配已有项目时两种分隔符写法都接受。
 - `--dir DIR`（可重复）只移动指定目录。
 - 以下情况拒绝执行：OpenCode 正在运行；不是 V2 数据库；数据库中已有的目录项目不符合已知的 id 规则（说明 OpenCode 版本不受支持）。如果还没有任何目录项目，请先在任意非 git 目录中打开一次 OpenCode，再重试。
 - audit 报告会显示受影响的会话数量。
@@ -288,6 +300,8 @@ python3 scripts/opencode_storage.py session adopt-global --backup
 ### 说明
 
 - 逻辑删除不等于物理缩小：SQLite 的 `DELETE` 只把页还给 freelist，只有 `VACUUM` 才能把空间真正还给文件系统。可回收空间 = `freelist + 事件行 + V1 残留行`。
+- Windows 会独占被打开的文件，所以 OpenCode 运行时 `VACUUM` 必然失败；预检已经替你拦下。若有 diff 文件被其他进程占用而删不掉，命令会指出该文件、保留 zip 归档，并报告实际删掉了多少个。
+- 这两道检查在 `VACUUM` 之前执行，不是在执行中。若正好在这个间隙里启动了进程，SQLite 会以 `database is locked` 拒绝，而不会损坏文件；停掉该进程后重跑即可。
 - 备份建议保留一两天；待 `integrity_check` 为 `ok`、OpenCode 正常启动、保留的会话都能打开、且不再需要被删历史后，再删除备份。
 
 ### 许可

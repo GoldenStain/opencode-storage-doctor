@@ -21,11 +21,17 @@ python3 scripts/opencode_storage.py session tree ID
 
 Shared options on every subcommand:
 
-- `--data-dir PATH`: override the data directory (defaults to `$XDG_DATA_HOME/opencode`).
+- `--data-dir PATH`: override the data directory (defaults to `$XDG_DATA_HOME/opencode`, or `~/.local/share/opencode`).
 - `--no-color`: disable ANSI color; `NO_COLOR` is honored automatically and color is off when output is not a TTY.
 - `--json`: emit machine-readable JSON instead of the rendered report.
 
-`audit` and `session tree` are read-only. `cleanup` and `session adopt-global` change the database and refuse to run while OpenCode is active. `session delete` is destructive. Both destructive `session` commands ask for confirmation unless `--yes` is given.
+On `cleanup` and `session adopt-global` only:
+
+- `--no-process-check`: continue when OpenCode processes cannot be listed at all (macOS, or a failed `tasklist`). Use it only after you confirmed by hand that OpenCode is stopped.
+
+`audit` and `session tree` are read-only. `cleanup` and `session adopt-global` change the database and refuse to run while OpenCode is active, and also when they cannot check for it. `session delete` is destructive. Both destructive `session` commands ask for confirmation unless `--yes` is given.
+
+Process detection reads `/proc` on Linux and runs `tasklist` on Windows, where `OpenChamber.exe` and `opencode-desktop.exe` count as OpenCode. A second check probes the database file itself: Windows tries an exclusive open, Linux walks `/proc/<pid>/fd`. It catches a holder whose name the list misses. Other platforms have no detector, so those two commands refuse unless `--no-process-check` is given.
 
 Resolve script paths relative to this skill directory. Do not assume copies exist in the user's home directory.
 
@@ -124,7 +130,7 @@ Any direct SQL modification to messages, sessions, parts, or event data is destr
 
 ## Global Sessions After the V1 to V2 Upgrade
 
-V1 put every session outside a git repository into one project, `global`. V2 gives each such directory its own project (id = sha1 of `directory:<path>`), but its migration leaves the old sessions in `global`. `opencode session list` lists only the current project, so those sessions seem lost. They are still in the database, and OpenChamber, which lists by directory, still shows them.
+V1 put every session outside a git repository into one project, `global`. V2 gives each such directory its own project (id = SHA-1 of the native `directory:<path>`), but its migration leaves the old sessions in `global`. `opencode session list` lists only the current project, so those sessions seem lost. They are still in the database, and OpenChamber, which lists by directory, still shows them.
 
 `session adopt-global` moves them, directory by directory, into the project V2 uses for that directory. It does what V2 already does for git repositories: it sets `project_id` and an empty `path`, and keeps `time_updated`, so the session order stays the same. It creates the directory project row when it is missing.
 
@@ -134,7 +140,7 @@ V1 put every session outside a git repository into one project, `global`. V2 giv
    python3 scripts/opencode_storage.py session adopt-global --dry-run
    ```
 
-   It skips directories that no longer exist, symlinked paths, and directories inside a git or hg tree (V2 adopts those itself when it opens them). Use `--dir DIR` (repeatable) to limit the move.
+   It skips directories that no longer exist, symlinked paths, and directories inside a git or hg tree (V2 adopts those itself when it opens them). Use `--dir DIR` (repeatable) to limit the move. On Windows the id hashes the native path (`C:\Users\you\proj`), while the stored `worktree` keeps forward slashes; both forms are accepted when matching an existing project.
 
 2. Tell the user to stop every OpenCode process, including the background service (`opencode service stop`) and any app that runs its own `opencode serve`, such as OpenChamber. The command refuses while one runs, because the service keeps session locations in memory.
 
@@ -186,7 +192,7 @@ The command refuses when the database is not V2, or when the newest V2 directory
 
    Omit flags that were not explicitly approved.
 
-4. The script must refuse to run while OpenCode is active. With `--backup`, it first creates and verifies a timestamped SQLite backup and zips any diff files it removes; without `--backup` it writes no backup and says so. It then checkpoints WAL, performs `VACUUM`, and runs `integrity_check` afterward. Each step prints as a `✓` line with the before/after sizes and reclaimed percentage. Recommend `--backup` unless the user already holds a recent backup.
+4. The script must refuse to run while OpenCode is active, when the database file is held open by any process, and also when it cannot check for either. With `--backup`, it first creates and verifies a timestamped SQLite backup and zips any diff files it removes; without `--backup` it writes no backup and says so. It then checkpoints WAL, performs `VACUUM`, and runs `integrity_check` afterward. Each step prints as a `✓` line with the before/after sizes and reclaimed percentage. Recommend `--backup` unless the user already holds a recent backup.
 
 5. After OpenCode restarts, run the audit again and ask the user to open several retained sessions.
 
