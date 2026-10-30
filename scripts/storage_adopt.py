@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import ntpath
 import os
+import posixpath
 import sqlite3
 from pathlib import Path
 
@@ -22,34 +24,70 @@ class AdoptError(Exception):
 
 
 def project_id(directory: str) -> str:
-    """Return the id V2 gives a directory outside any VCS tree."""
-    return hashlib.sha1(f"directory:{directory}".encode()).hexdigest()
+    """Return the id V2 gives a directory outside any VCS tree.
+
+    V2 hashes the OS-native path, so a directory read from a Windows database
+    must be hashed with backslashes even when this script runs on POSIX.
+    """
+    return hashlib.sha1(f"directory:{storage_env.native_dir(directory)}".encode()).hexdigest()
+
+
+def project_id_candidates(directory: str) -> list[str]:
+    """Return the ids OpenCode may have written for a directory, native form first.
+
+    Older V2 builds hashed the stored path verbatim, which after the path
+    normalization migration is the slash form on Windows.
+    """
+    candidates = []
+    for form in (storage_env.native_dir(directory), str(directory).replace("\\", "/")):
+        value = hashlib.sha1(f"directory:{form}".encode()).hexdigest()
+        if value not in candidates:
+            candidates.append(value)
+    return candidates
+
+
+def _path_module(directory: str):
+    return ntpath if storage_env.looks_windows(directory) else posixpath
 
 
 def _vcs_marker(directory: str) -> str | None:
-    current = directory
+    current = storage_env.native_dir(directory)
+    path = _path_module(current)
     while True:
         for name in (".git", ".hg"):
-            marker = os.path.join(current, name)
+            marker = path.join(current, name)
             if os.path.lexists(marker):
                 return marker
-        parent = os.path.dirname(current)
+        parent = path.dirname(current)
         if parent == current:
             return None
         current = parent
 
 
 def _skip_reason(directory: str) -> str | None:
-    if not os.path.isabs(directory) or os.path.normpath(directory) != directory:
+    if not storage_env.is_absolute_dir(directory) or not storage_env.is_normalized_dir(directory):
         return "path is not absolute and normalized"
-    if not os.path.isdir(directory):
+    local = storage_env.native_dir(directory)
+    if not os.path.isdir(local):
         return "directory does not exist"
-    if os.path.realpath(directory) != directory:
-        return f"symlinked (real path {os.path.realpath(directory)})"
+    real = os.path.realpath(local)
+    if not storage_env.same_path(real, directory):
+        return f"symlinked (real path {real})"
     marker = _vcs_marker(directory)
     if marker:
         # V2 itself adopts global sessions into a git or hg project when it opens one.
         return f"inside a VCS tree ({marker}); OpenCode adopts these itself"
+    return None
+
+
+def _existing_project(connection: sqlite3.Connection, directory: str):
+    """Return the project row for a directory under any id form OpenCode may use."""
+    for candidate in project_id_candidates(directory):
+        row = connection.execute(
+            "SELECT id, worktree, vcs FROM project WHERE id = ?", (candidate,)
+        ).fetchone()
+        if row is not None:
+            return row
     return None
 
 
@@ -71,7 +109,7 @@ def unavailable_reason(connection: sqlite3.Connection) -> str | None:
             "no V2 directory project exists to confirm the project-id rule; "
             "open OpenCode once in any non-git directory, then retry"
         )
-    if row[0] != project_id(row[1]):
+    if row[0] not in project_id_candidates(row[1]):
         return f"project {row[0]} ({row[1]}) does not follow the known project-id rule; unsupported OpenCode version"
     return None
 
@@ -93,10 +131,12 @@ def build_plan(connection: sqlite3.Connection, only_dirs: list[str] | None = Non
             continue
         item = {"directory": directory, "sessions": sessions, "top_level": top_level, "first": first, "last": last}
         reason = _skip_reason(directory)
-        target = project_id(directory)
-        existing = connection.execute("SELECT worktree, vcs FROM project WHERE id = ?", (target,)).fetchone()
-        if reason is None and existing and (existing[0] != directory or existing[1] is not None):
-            reason = f"project {target} exists with worktree {existing[0]} and vcs {existing[1]}"
+        existing = _existing_project(connection, directory)
+        target = existing[0] if existing else project_id(directory)
+        if reason is None and existing and (
+            not storage_env.same_path(existing[1], directory) or existing[2] is not None
+        ):
+            reason = f"project {target} exists with worktree {existing[1]} and vcs {existing[2]}"
         if reason:
             plan["skipped"].append({**item, "reason": reason})
         else:
@@ -127,7 +167,7 @@ def apply(connection: sqlite3.Connection, plan: dict) -> dict:
             worktree, vcs = connection.execute(
                 "SELECT worktree, vcs FROM project WHERE id = ?", (move["project_id"],)
             ).fetchone()
-            if worktree != move["directory"] or vcs is not None:
+            if not storage_env.same_path(worktree, move["directory"]) or vcs is not None:
                 raise AdoptError(f"project {move['project_id']} has worktree {worktree} and vcs {vcs}")
             cursor = connection.execute(
                 "UPDATE session_v2 SET project_id = ?, path = '' "
