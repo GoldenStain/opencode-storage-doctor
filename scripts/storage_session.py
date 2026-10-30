@@ -197,7 +197,10 @@ def delete_v1(artifacts: storage_env.Artifacts, plan: dict, archive: Path | None
     paths = storage_v1.diff_paths(artifacts, set(plan["session_ids"]))
     diff_bytes = sum(path.stat().st_size for path in paths)
     if paths:
-        storage_backup.archive_and_remove(paths, archive)
+        try:
+            storage_backup.archive_and_remove(paths, archive)
+        except storage_backup.BackupError as error:
+            raise SessionDeleteError(str(error)) from error
     return {
         "tables": removed["tables"],
         "diffs": {

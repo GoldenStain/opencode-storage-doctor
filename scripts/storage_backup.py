@@ -34,7 +34,12 @@ def backup_database(db_path: Path, backup: Path) -> None:
 
 
 def archive_and_remove(paths: list[Path], archive: Path | None) -> None:
-    """Zip and verify the files when archive is given, then delete them."""
+    """Zip and verify the files when archive is given, then delete them.
+
+    Deletion is per file so one locked file does not stop the others, and the
+    error names what is left. Windows refuses to delete a file another process
+    holds open.
+    """
     if archive is not None:
         with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as output:
             for path in paths:
@@ -44,5 +49,19 @@ def archive_and_remove(paths: list[Path], archive: Path | None) -> None:
                 raise BackupError(f"diff archive failed verification: {archive}")
             if len(verify.namelist()) != len(paths):
                 raise BackupError(f"diff archive count mismatch: {archive}")
+    removed = 0
+    failed: list[str] = []
     for path in paths:
-        path.unlink()
+        try:
+            path.unlink()
+            removed += 1
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            failed.append(f"{path} ({error.strerror or error})")
+    if failed:
+        raise BackupError(
+            f"deleted {removed} of {len(paths)} files; {len(failed)} were kept:\n  "
+            + "\n  ".join(failed[:10])
+            + ("\n  ..." if len(failed) > 10 else "")
+        )
